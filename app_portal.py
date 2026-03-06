@@ -1,94 +1,61 @@
 # ==============================================================================
-# ARQUITECTURA FASE 2: EL ESCAPARATE WEB (STREAMLIT)
-# Objetivo: Convertir nuestro motor de IA en una aplicación web interactiva.
+# MÓDULO 6: GESTIÓN DE RIESGO CUANTITATIVA (EL ESCUDO)
+# Objetivo: Calcular matemáticamente el tamaño de la posición para no arruinarnos.
+# Restricción: Cuenta de 1.000 € (Solo arriesgamos el 2% por operación).
 # ==============================================================================
 
-import streamlit as st
-import yfinance as yf
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
-
-# ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DE LA PÁGINA (La "Pintura" de la Carrocería)
-# ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📈")
-
-st.title("🤖 Portal de Inteligencia Cuantitativa")
-st.markdown("Plataforma de análisis predictivo para carteras eficientes.")
-
-# ------------------------------------------------------------------------------
-# 2. PANEL DE CONTROL (El "Volante" para el usuario)
-# ------------------------------------------------------------------------------
-st.sidebar.header("Parámetros de Inversión")
-# El usuario escribe el nombre de la acción en una caja de texto
-ticker_usuario = st.sidebar.text_input("Símbolo del Activo (ej. SPY, AAPL, BTC-USD)", value="SPY")
-# El usuario pulsa un botón para iniciar la IA
-boton_analizar = st.sidebar.button("Ejecutar Oráculo IA")
-
-# ------------------------------------------------------------------------------
-# 3. EL MOTOR OCULTO (Las funciones que ya construimos en Colab)
-# ------------------------------------------------------------------------------
-def obtener_datos(ticker):
-    activo = yf.Ticker(ticker)
-    return activo.history(period="2y")
-
-def calcular_indicadores(df):
-    datos = df.copy()
-    datos['Media_20_Dias'] = datos['Close'].rolling(window=20).mean()
-    datos['Distancia_a_Media_%'] = ((datos['Close'] / datos['Media_20_Dias']) - 1) * 100
-    datos['Retorno_Hoy_%'] = datos['Close'].pct_change() * 100
-    datos['Target_Mañana_Sube'] = np.where(datos['Close'].shift(-1) > datos['Close'], 1, 0)
-    return datos.dropna()
-
-def entrenar_modelo(df):
-    columnas_pistas = ['Distancia_a_Media_%', 'Retorno_Hoy_%', 'Volume']
-    indice_corte = int(len(df) * 0.8)
-    datos_estudio = df.iloc[:indice_corte]
-    datos_examen = df.iloc[indice_corte:]
+def calcular_tamaño_posicion(capital_total, precio_accion, stop_loss_porcentaje, riesgo_maximo_porcentaje=2.0):
+    """
+    Esta función es nuestro 'Compartimento Estanco'.
     
-    modelo_ia = RandomForestClassifier(n_estimators=100, random_state=42)
-    modelo_ia.fit(datos_estudio[columnas_pistas], datos_estudio['Target_Mañana_Sube'])
+    ¿Qué hace?
+    1. Calcula cuánto dinero máximo podemos perder en esta operación (El 2% de 1.000€ = 20€).
+    2. Mira nuestro "Stop-Loss" (el paracaídas: a qué % de caída venderemos automáticamente asumiendo el error).
+    3. Calcula exactamente CUÁNTAS acciones debemos comprar para que, si salta el paracaídas, 
+       solo hayamos perdido esos 20€.
+    """
+    print("🛡️ INICIANDO PROTOCOLO DE GESTIÓN DE RIESGO 🛡️")
+    print(f"Capital Total de la Cartera: {capital_total} €")
     
-    predicciones = modelo_ia.predict(datos_examen[columnas_pistas])
-    precision = accuracy_score(datos_examen['Target_Mañana_Sube'], predicciones) * 100
-    return modelo_ia, precision, columnas_pistas
+    # 1. ¿Cuánto es lo máximo que nos permitimos perder si la IA se equivoca?
+    riesgo_en_euros = capital_total * (riesgo_maximo_porcentaje / 100)
+    print(f"Límite de pérdida (Compartimento estanco): {riesgo_en_euros} €")
+    
+    # 2. ¿Cuánto dinero perdemos POR ACCIÓN si cae hasta nuestro paracaídas (stop-loss)?
+    # Ejemplo: Si la acción vale 100€ y nuestro stop-loss es del 5%, perderemos 5€ por acción.
+    riesgo_por_accion = precio_accion * (stop_loss_porcentaje / 100)
+    
+    # 3. EL CÁLCULO MÁGICO (Position Sizing)
+    # Dividimos nuestra pérdida máxima total entre la pérdida por acción.
+    # Siguiendo el ejemplo: 20€ / 5€ = Podemos comprar 4 acciones.
+    numero_acciones = riesgo_en_euros / riesgo_por_accion
+    
+    # Redondeamos hacia abajo, porque no podemos comprar medias acciones en muchos brokers
+    numero_acciones_real = int(numero_acciones)
+    
+    # Calculamos cuánto dinero de nuestros 1.000€ vamos a invertir en total
+    capital_a_invertir = numero_acciones_real * precio_accion
+    
+    print("\n--- INSTRUCCIONES DE EJECUCIÓN (BROKER) ---")
+    print(f"Precio actual del activo: {precio_accion:.2f} €")
+    print(f"Colocar Stop-Loss (Paracaídas automático) a un: -{stop_loss_porcentaje}% de caída")
+    print(f"-> COMPRAR: {numero_acciones_real} acciones.")
+    print(f"-> CAPITAL A INVERTIR: {capital_a_invertir:.2f} €")
+    print(f"-> LIQUIDEZ RESTANTE: {(capital_total - capital_a_invertir):.2f} € (Guardado seguro)")
+    print("-------------------------------------------")
+    print(f"Si la IA acierta, ganamos. Si la IA falla y salta el stop-loss,")
+    print(f"solo habremos perdido {riesgo_en_euros} €. El submarino sigue a flote.")
+    
+    return numero_acciones_real, capital_a_invertir
 
-# ------------------------------------------------------------------------------
-# 4. EJECUCIÓN WEB (Lo que ocurre al pulsar el botón)
-# ------------------------------------------------------------------------------
-if boton_analizar:
-    with st.spinner(f"Extrayendo datos de {ticker_usuario} y entrenando red neuronal..."):
-        # Ejecutamos el motor paso a paso
-        datos_crudos = obtener_datos(ticker_usuario)
-        
-        if datos_crudos.empty:
-            st.error("Error: Activo no encontrado. Comprueba el símbolo.")
-        else:
-            datos_procesados = calcular_indicadores(datos_crudos)
-            modelo, precision_ia, pistas = entrenar_modelo(datos_procesados)
-            
-            # --- ZONA VISUAL DE LA WEB ---
-            
-            # Mostramos la precisión como una métrica de negocio
-            st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%")
-            
-            # Generamos la Radiografía (Gráfico)
-            st.subheader("Radiografía del Mercado")
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=datos_procesados.index, y=datos_procesados['Close'], name='Precio'))
-            fig.add_trace(go.Scatter(x=datos_procesados.index, y=datos_procesados['Media_20_Dias'], name='Radar 20D', line=dict(dash='dot')))
-            fig.update_layout(template='plotly_dark', height=400)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            # El Oráculo (Semáforo)
-            st.subheader("Señal para Mañana")
-            datos_hoy = datos_procesados.iloc[-1:]
-            prediccion_mañana = modelo.predict(datos_hoy[pistas])[0]
-            
-            if prediccion_mañana == 1:
-                st.success("🟢 LUZ VERDE: Probabilidad matemática de subida. Entorno favorable para desplegar capital.")
-            else:
-                st.error("🔴 LUZ ROJA: Probabilidad matemática de caída. Mantener liquidez, proteger capital.")
+# ==============================================================================
+# PRUEBA DEL SISTEMA
+# ==============================================================================
+# Imaginemos que la IA nos ha dado LUZ VERDE hoy para una acción que cuesta 150€.
+# Decidimos que si la acción cae un 5%, asumiremos que la IA se equivocó y venderemos.
+if __name__ == "__main__":
+    acciones_a_comprar, inversion = calcular_tamaño_posicion(
+        capital_total=1000,          # Nuestra restricción de capital
+        precio_accion=150.0,         # Precio imaginario de la acción hoy
+        stop_loss_porcentaje=5.0     # Nuestro nivel de dolor por operación
+    )
