@@ -43,7 +43,7 @@ if firebase_config_raw:
     except: pass
 
 # CUADRO DE TEXTO CLAVE: Aquí es donde pegas el ID cuando lo tengas
-project_id = st.sidebar.text_input(8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA
+project_id = st.sidebar.text_input(
     "Project ID (Opcional)", 
     value=detected_id if detected_id else "",
     placeholder="ej: portal-ia-12345",
