@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 5: EL PORTAL COMPLETO + SIMULADOR DE VUELO (BACKTESTING)
-# Objetivo: Probar matemáticamente la estrategia contra el pasado antes de arriesgar.
+# ARQUITECTURA FASE 6: INGENIERÍA DE CARACTERÍSTICAS (FEATURE ENGINEERING)
+# Objetivo: Inyectar más datos (Volatilidad, Volumen Institucional) para subir la precisión.
 # ==============================================================================
 
 import streamlit as st
@@ -32,33 +32,61 @@ stop_loss_usuario = st.sidebar.slider("Stop-Loss (Paracaídas %)", min_value=1.0
 boton_analizar = st.sidebar.button("Ejecutar Oráculo y Simulador IA")
 
 # ------------------------------------------------------------------------------
-# 3. EL MOTOR OCULTO, EL ESCUDO Y EL SIMULADOR
+# 3. EL MOTOR OCULTO Y EL ESCUDO
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     activo = yf.Ticker(ticker)
-    return activo.history(period="2y")
+    # Pedimos un poco más de historial (3 años) porque ahora hacemos cálculos más complejos
+    return activo.history(period="3y")
 
 def calcular_indicadores(df):
     datos = df.copy()
+    
+    # --- PISTAS BÁSICAS (Las que ya teníamos) ---
     datos['Media_20_Dias'] = datos['Close'].rolling(window=20).mean()
     datos['Distancia_a_Media_%'] = ((datos['Close'] / datos['Media_20_Dias']) - 1) * 100
     datos['Retorno_Hoy_%'] = datos['Close'].pct_change() * 100
+    
+    # --- NUEVAS PISTAS INSTITUCIONALES (Feature Engineering) ---
+    
+    # Pista 1: Volatilidad a 5 días (Mide el "miedo" del mercado)
+    datos['Volatilidad_5D'] = datos['Close'].rolling(window=5).std()
+    
+    # Pista 2: Volumen Relativo (Detecta las "Ballenas" institucionales)
+    # Comparamos el volumen de hoy con la media de los últimos 20 días
+    datos['Media_Volumen_20D'] = datos['Volume'].rolling(window=20).mean()
+    datos['Volumen_Relativo'] = datos['Volume'] / datos['Media_Volumen_20D']
+    
+    # Pista 3: Inercia de 3 días (Momento de corto plazo)
+    datos['Retorno_3D_%'] = datos['Close'].pct_change(periods=3) * 100
+    
+    # Lo que queremos predecir (Target)
     datos['Target_Mañana_Sube'] = np.where(datos['Close'].shift(-1) > datos['Close'], 1, 0)
+    
+    # Limpiamos los días iniciales que se quedan sin datos al calcular las medias
     return datos.dropna()
 
 def entrenar_modelo(df):
-    columnas_pistas = ['Distancia_a_Media_%', 'Retorno_Hoy_%', 'Volume']
+    # ¡LE DAMOS LAS NUEVAS PISTAS AL DETECTIVE (La IA)!
+    columnas_pistas = [
+        'Distancia_a_Media_%', 
+        'Retorno_Hoy_%', 
+        'Volatilidad_5D', 
+        'Volumen_Relativo', 
+        'Retorno_3D_%'
+    ]
+    
     indice_corte = int(len(df) * 0.8)
     datos_estudio = df.iloc[:indice_corte]
     datos_examen = df.iloc[indice_corte:]
     
-    modelo_ia = RandomForestClassifier(n_estimators=100, random_state=42)
+    # Hemos ajustado un poco el Cerebro (max_depth=5) para que no "memorice" en lugar de "aprender" (Overfitting)
+    modelo_ia = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
     modelo_ia.fit(datos_estudio[columnas_pistas], datos_estudio['Target_Mañana_Sube'])
     
     predicciones_examen = modelo_ia.predict(datos_examen[columnas_pistas])
     precision = accuracy_score(datos_examen['Target_Mañana_Sube'], predicciones_examen) * 100
     
-    # Devolvemos también los datos del examen para poder usar la máquina del tiempo
     return modelo_ia, precision, columnas_pistas, datos_examen, predicciones_examen
 
 def calcular_tamaño_posicion(capital_total, precio_accion, stop_loss_porcentaje, riesgo_maximo_porcentaje=2.0):
@@ -71,16 +99,13 @@ def calcular_tamaño_posicion(capital_total, precio_accion, stop_loss_porcentaje
     capital_a_invertir = numero_acciones * precio_accion
     return numero_acciones, capital_a_invertir, riesgo_en_euros
 
-# NUEVO MÓDULO: EL SIMULADOR DE VUELO
 def ejecutar_simulador(datos_examen, predicciones_examen, capital_inicial):
     df_sim = datos_examen.copy()
     df_sim['Señal_IA'] = predicciones_examen
     
-    # Si ayer la IA dijo 1 (Comprar), hoy ganamos/perdemos lo que haga el mercado. Si dijo 0, nos quedamos en efectivo (0%).
     df_sim['Señal_Ayer'] = df_sim['Señal_IA'].shift(1)
     df_sim['Retorno_IA_%'] = np.where(df_sim['Señal_Ayer'] == 1, df_sim['Retorno_Hoy_%'], 0)
     
-    # Simulamos el crecimiento del dinero día a día usando interés compuesto
     df_sim['Capital_Inversor_Tradicional'] = capital_inicial * (1 + (df_sim['Retorno_Hoy_%'] / 100)).cumprod()
     df_sim['Capital_Estrategia_IA'] = capital_inicial * (1 + (df_sim['Retorno_IA_%'] / 100)).cumprod()
     
@@ -98,18 +123,17 @@ if boton_analizar:
             st.error("Error: Activo no encontrado.")
         else:
             datos_procesados = calcular_indicadores(datos_crudos)
-            # Ahora la IA nos devuelve también los datos para el simulador
             modelo, precision_ia, pistas, datos_examen, predic_examen = entrenar_modelo(datos_procesados)
             
+            # Mostramos las pistas que está usando la IA
+            st.info(f"🧠 Cerebro IA analizando {len(pistas)} variables predictivas simultáneamente.")
             st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%")
             
-            # --- ZONA DEL SIMULADOR (MÁQUINA DEL TIEMPO) ---
             st.subheader("✈️ Simulador de Vuelo: IA vs Inversor Tradicional")
-            st.markdown(f"Simulación de los últimos meses invirtiendo **{capital_usuario} €**.")
+            st.markdown(f"Simulación invirtiendo **{capital_usuario} €**.")
             
             df_simulado = ejecutar_simulador(datos_examen, predic_examen, capital_usuario)
             
-            # Extraemos los resultados finales de la cuenta bancaria
             capital_final_tradicional = df_simulado['Capital_Inversor_Tradicional'].iloc[-1]
             capital_final_ia = df_simulado['Capital_Estrategia_IA'].iloc[-1]
             
@@ -118,7 +142,6 @@ if boton_analizar:
             col_sim2.metric("Cuenta: Inteligencia Cuantitativa (IA)", f"{capital_final_ia:.2f} €", 
                             delta=f"Diferencia: {(capital_final_ia - capital_final_tradicional):.2f} €")
             
-            # Dibujamos la carrera de los capitales
             fig_sim = go.Figure()
             fig_sim.add_trace(go.Scatter(x=df_simulado.index, y=df_simulado['Capital_Inversor_Tradicional'], 
                                          name='Tradicional', line=dict(color='gray')))
@@ -129,7 +152,6 @@ if boton_analizar:
             
             st.markdown("---")
             
-            # --- ZONA DEL ORÁCULO Y EJECUCIÓN (PRESENTE) ---
             st.subheader("Señal para Mañana (Tiempo Real)")
             datos_hoy = datos_procesados.iloc[-1:]
             prediccion_mañana = modelo.predict(datos_hoy[pistas])[0]
