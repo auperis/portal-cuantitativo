@@ -1,167 +1,153 @@
 # ==============================================================================
-# ARQUITECTURA FASE 12.5: ESTABILIZACIÓN Y MODO LOCAL
-# Objetivo: Que el sistema funcione SIEMPRE, con o sin conexión a la nube.
+# ARQUITECTURA FASE 14: AGENTE DE NOTIFICACIONES (TELEGRAM BOT)
+# Objetivo: Enviar alertas en tiempo real al móvil cuando la IA detecta señales.
 # ==============================================================================
 
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+import requests
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
-import os
 import json
+import os
 
-# Intentamos cargar la librería de la nube, pero si no está, no bloqueamos al usuario
+# --- CONEXIÓN SATELITAL (PROTOCOLO HÍBRIDO) ---
 try:
     from google.cloud import firestore as google_firestore
     from firebase_admin import initialize_app, _apps
-    HAS_CLOUD_CAPABILITY = True
+    HAS_CLOUD = True
 except ImportError:
-    HAS_CLOUD_CAPABILITY = False
+    HAS_CLOUD = False
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DE LA INTERFAZ
+# 1. CONFIGURACIÓN E INICIALIZACIÓN
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal de Inversión IA", layout="wide", page_icon="🛡️")
+st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Inicializamos una memoria temporal (solo dura mientras la pestaña esté abierta)
-if 'memoria_temporal' not in st.session_state:
-    st.session_state['memoria_temporal'] = []
-
-# ------------------------------------------------------------------------------
-# 2. BARRA LATERAL (EL CENTRO DE CONTROL)
-# ------------------------------------------------------------------------------
-st.sidebar.header("📡 Conexión al Sistema")
-
-# Recuperamos configuración si existe en el entorno
+# Detección de identidad automática
+app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_raw = os.environ.get('__firebase_config')
 detected_id = None
 if firebase_config_raw:
     try:
-        detected_id = json.loads(firebase_config_raw).get('projectId')
+        config_dict = json.loads(firebase_config_raw)
+        detected_id = config_dict.get('projectId')
     except: pass
 
-# CUADRO DE TEXTO CLAVE: Aquí es donde pegas el ID cuando lo tengas
-project_id = st.sidebar.text_input(
-    "Project ID (Opcional)", 
-    value=detected_id if detected_id else "",
-    placeholder="ej: portal-ia-12345",
-    help="Si lo dejas vacío, el sistema funcionará en modo local (sin memoria histórica)."
-)
+# ------------------------------------------------------------------------------
+# 2. BARRA LATERAL: CENTRO DE COMUNICACIONES
+# ------------------------------------------------------------------------------
+st.sidebar.header("📡 Conexión y Alertas")
 
+# Configuración de Nube (Opcional)
+project_id_manual = st.sidebar.text_input("Project ID (Nube)", value=detected_id if detected_id else "")
 db = None
-MODO_NUBE = False
-
-# Intentamos sintonizar el satélite solo si hay un ID válido
-if HAS_CLOUD_CAPABILITY and project_id and len(project_id) > 5:
+if HAS_CLOUD and project_id_manual:
     try:
-        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-        db = google_firestore.Client(project=project_id)
-        if not _apps:
-            initialize_app(options={'projectId': project_id})
-        st.sidebar.success("✅ Modo Satélite Activo")
-        MODO_NUBE = True
-    except Exception as e:
-        st.sidebar.warning(f"⚠️ Usando Modo Local (Error: {e})")
-else:
-    st.sidebar.info("🏠 Modo Local Activo")
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id_manual
+        db = google_firestore.Client(project=project_id_manual)
+        if not _apps: initialize_app(options={'projectId': project_id_manual})
+        st.sidebar.success("✅ Nube Conectada")
+    except: st.sidebar.warning("🏠 Modo Local Activo")
 
 st.sidebar.divider()
-st.sidebar.header("📈 Configuración del Radar")
-activos_lista = st.sidebar.text_input("Activos (separados por coma)", value="SPY, QQQ, BTC-USD, GLD")
-capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
-stop_loss_pct = st.sidebar.slider("Stop-Loss (%)", 1.0, 10.0, 5.0)
 
-boton_ejecutar = st.sidebar.button("🚀 Activar Radar IA")
+# CONFIGURACIÓN DEL MENSAJERO (TELEGRAM) - ¡ESTO ES LO QUE BUSCABA!
+st.sidebar.subheader("🤖 Configurar Bot Telegram")
+tel_token = st.sidebar.text_input("Bot Token", type="password", help="Pega aquí el Token de @BotFather")
+tel_chat_id = st.sidebar.text_input("Chat ID", help="Pega aquí tu ID de @userinfobot")
+activar_alertas = st.sidebar.checkbox("Activar Alertas al Móvil", value=False)
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR IA Y CÁLCULOS
+# 3. MOTOR DE NOTIFICACIONES
+# ------------------------------------------------------------------------------
+def enviar_alerta_telegram(mensaje):
+    if not tel_token or not tel_chat_id:
+        return
+    url = f"https://api.telegram.org/bot{tel_token}/sendMessage"
+    payload = {"chat_id": tel_chat_id, "text": mensaje, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        st.error(f"Error al enviar alerta: {e}")
+
+# ------------------------------------------------------------------------------
+# 4. MOTOR LÓGICO IA Y RIESGO
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     return yf.Ticker(ticker).history(period="2y")
 
 def calcular_indicadores(df):
     d = df.copy()
-    d['Retorno_Hoy'] = d['Close'].pct_change() * 100
+    d['Retorno'] = d['Close'].pct_change() * 100
     d['Media_20'] = d['Close'].rolling(20).mean()
     d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
-    d['Sube_Mañana'] = np.where(d['Close'].shift(-1) > d['Close'], 1, 0)
+    d['Target'] = np.where(d['Close'].shift(-1) > d['Close'], 1, 0)
     return d.dropna()
 
-def entrenar_cerebro(df):
-    features = ['Retorno_Hoy', 'Distancia']
-    corte = int(len(df) * 0.8)
-    train = df.iloc[:corte]
-    model = RandomForestClassifier(n_estimators=50, random_state=42)
-    model.fit(train[features], train['Sube_Mañana'])
-    return model, features
+def entrenar_ia(df):
+    feat = ['Retorno', 'Distancia']
+    train = df.iloc[:int(len(df)*0.8)]
+    modelo = RandomForestClassifier(n_estimators=100, random_state=42)
+    modelo.fit(train[feat], train['Target'])
+    return modelo, feat
 
 # ------------------------------------------------------------------------------
-# 4. INTERFAZ PRINCIPAL
+# 5. INTERFAZ Y REBALANCEO
 # ------------------------------------------------------------------------------
-st.title("🤖 Portal Cuantitativo IA (Cartera 1.000 €)")
+st.title("🤖 Portal IA: Gestión Cuantitativa")
 
-tab1, tab2 = st.tabs(["🎯 Radar de Hoy", "📊 Historial / Auditoría"])
+st.sidebar.header("🛡️ Gestión de Riesgo")
+capital_total = st.sidebar.number_input("Capital (€)", value=1000)
+umbral_conv = st.sidebar.slider("Umbral Convicción (%)", 50, 80, 65)
 
-with tab1:
-    if boton_ejecutar:
-        activos = [x.strip().upper() for x in activos_lista.split(',')]
-        resultados = []
-        progreso = st.progress(0)
+if st.sidebar.button("Activar Radar y Notificar"):
+    tickers = ["SPY", "QQQ", "GLD", "BTC-USD", "TLT"]
+    resultados = []
+    
+    progreso = st.progress(0)
+    for i, tick in enumerate(tickers):
+        try:
+            df = calcular_indicadores(obtener_datos(tick))
+            mod, feat = entrenar_ia(df)
+            prob = mod.predict_proba(df.iloc[-1:][feat])[0][1] * 100
+            precio = df['Close'].iloc[-1]
+            resultados.append({
+                "Activo": tick,
+                "Convicción (%)": round(prob, 2),
+                "Precio ($)": round(precio, 2)
+            })
+        except: pass
+        progreso.progress((i + 1) / len(tickers))
+    
+    if resultados:
+        df_res = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
+        st.subheader("🏆 Ranking de Hoy")
+        st.dataframe(df_res.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
         
-        for i, tick in enumerate(activos):
-            try:
-                # 1. Ingesta y Procesamiento
-                df = calcular_indicadores(obtener_datos(tick))
-                model, feat = entrenar_cerebro(df)
-                
-                # 2. Predicción para Mañana
-                hoy = df.iloc[-1:]
-                prob = model.predict_proba(hoy[feat])[0][1] * 100
-                
-                res = {
-                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Activo": tick,
-                    "Convicción (%)": round(prob, 2),
-                    "Precio ($)": round(hoy['Close'].values[0], 2)
-                }
-                resultados.append(res)
-                
-                # 3. Guardado (Nube o Local)
-                if MODO_NUBE and db:
-                    app_id_env = os.environ.get('__app_id', 'default')
-                    db.collection('artifacts').document(app_id_env).collection('public').document('data').collection('predicciones').document().set(res)
-                
-                st.session_state['memoria_temporal'].append(res)
-                
-            except: pass
-            progreso.progress((i + 1) / len(activos))
-
-        if resultados:
-            df_final = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
-            st.subheader("🏆 Ranking de Oportunidades")
-            st.dataframe(df_final.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
+        ganador = df_res.iloc[0]
+        if ganador["Convicción (%)"] >= umbral_conv:
+            st.success(f"👑 SEÑAL GANADORA: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
             
-            ganador = df_final.iloc[0]
-            st.success(f"👑 Señal Ganadora: {ganador['Activo']} con {ganador['Convicción (%)']}% de probabilidad.")
+            # Cálculo de fracciones para 1.000€
+            riesgo_eur = capital_total * 0.02 # Riesgo 20€
+            stop_loss_eur = ganador['Precio ($)'] * 0.05 # 5% SL
+            acciones = riesgo_eur / stop_loss_eur
             
-            # Gestión de Riesgo (Fase 10)
-            riesgo_eur = capital_total * 0.02 # Arriesgamos solo 20€
-            coste_stop = ganador['Precio ($)'] * (stop_loss_usuario / 100 if 'stop_loss_usuario' in locals() else stop_loss_pct / 100)
-            acciones = riesgo_eur / coste_stop
+            reporte = (
+                f"🚀 *ALERTA PORTAL IA*\n\n"
+                f"Activo: `{ganador['Activo']}`\n"
+                f"Convicción: `{ganador['Convicción (%)']}%` 📈\n"
+                f"Precio: `{ganador['Precio ($)']} $`\n\n"
+                f"💡 *Instrucción de Compra:*\n"
+                f"Comprar `{acciones:.4f}` acciones.\n"
+                f"Inversión: `{acciones * ganador['Precio ($)']:.2f} €`"
+            )
             
-            col1, col2 = st.columns(2)
-            col1.metric("Acciones (Fraccionadas)", f"{acciones:.4f}")
-            col2.metric("Inversión Sugerida", f"{acciones * ganador['Precio ($)']:.2f} €")
-            st.info(f"Riesgo Máximo de la operación: {riesgo_eur} €.")
-
-with tab2:
-    st.subheader("📓 Historial de Predicciones")
-    if st.session_state['memoria_temporal']:
-        df_hist = pd.DataFrame(st.session_state['memoria_temporal'])
-        st.table(df_hist.tail(10))
-        if not MODO_NUBE:
-            st.warning("⚠️ Nota: Estás en Modo Local. Este historial se borrará si cierras la pestaña.")
-    else:
-        st.info("Activa el radar en la pestaña anterior para ver datos aquí.")
+            if activar_alertas:
+                enviar_alerta_telegram(reporte)
+                st.toast("📲 Alerta enviada al móvil.")
+        else:
+            st.error(f"Convicción insuficiente ({ganador['Convicción (%)']}%). Liquidez al 100%.")
