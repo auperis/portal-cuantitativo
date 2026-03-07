@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 28: EL PARACAÍDAS INTELIGENTE (ATR TRAILING STOP)
-# Objetivo: Adaptar la distancia del Stop-Loss a la volatilidad real del mercado
-# para evitar salidas prematuras por el "ruido" diario (Whipsaw).
+# ARQUITECTURA FASE 29: RÉGIMEN MACRO Y EXPANSIÓN TEMPORAL
+# Objetivo: Ampliar el horizonte de simulación para dejar correr ganancias y 
+# añadir un filtro de Régimen Macro (SMA 200) para evitar inviernos financieros.
 # ==============================================================================
 
 import streamlit as st
@@ -16,7 +16,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Paracaídas ATR", layout="wide", page_icon="🪂")
+st.set_page_config(page_title="Portal IA - Régimen Macro", layout="wide", page_icon="🔭")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -32,44 +32,48 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("⚖️ Diales de Precisión")
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
-max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
+st.sidebar.header("⏱️ Horizonte Temporal")
+# NUEVO: Expansión del tiempo de simulación
+dias_simulacion = st.sidebar.selectbox("Días de Simulación (Backtest)", [30, 90, 180, 365], index=1,
+                                       help="90 o 180 días permite ver cómo maduran las operaciones institucionales.")
 
 st.sidebar.divider()
-st.sidebar.header("🪂 Sensor de Turbulencias (ATR)")
-# SUSTITUIMOS EL PORCENTAJE FIJO POR UN MULTIPLICADOR DE VOLATILIDAD
-multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 2.0, 
-                                      help="2.0x significa que damos de margen el doble de lo que el activo se mueve en un día normal.")
+st.sidebar.header("🔭 Filtros de Precisión")
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
+multiplicador_atr = st.sidebar.slider("Multiplicador ATR (Paracaídas)", 1.0, 5.0, 2.0)
+
+# NUEVO: Filtro de Régimen Macro
+filtro_macro = st.sidebar.checkbox("Activar Lente Macro (Media 200)", value=True,
+                                   help="Prohíbe comprar si el activo está en tendencia bajista de largo plazo.")
 
 st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
+max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR DE CÁLCULO (AÑADIENDO EL SENSOR ATR)
+# 3. MOTOR DE CÁLCULO
 # ------------------------------------------------------------------------------
 def calcular_indicadores(df):
     d = df.copy()
     d['Retorno'] = d['Close'].pct_change() * 100
     d['Media_50'] = d['Close'].rolling(50).mean()
+    
+    # NUEVO: La línea que separa el Verano del Invierno Financiero
+    d['Media_200'] = d['Close'].rolling(200).mean() 
+    
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
     
-    # RSI
     delta = d['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     d['RSI'] = 100 - (100 / (1 + (gain / loss)))
     
-    # NUEVO: CÁLCULO DEL ATR (Average True Range)
     d['High_Low'] = d['High'] - d['Low']
     d['High_PrevClose'] = np.abs(d['High'] - d['Close'].shift(1))
     d['Low_PrevClose'] = np.abs(d['Low'] - d['Close'].shift(1))
-    # El True Range es el movimiento máximo del día
     d['True_Range'] = d[['High_Low', 'High_PrevClose', 'Low_PrevClose']].max(axis=1)
-    # Suavizamos la media a 14 días
     d['ATR'] = d['True_Range'].rolling(14).mean()
-    # Lo convertimos a porcentaje respecto al precio actual para usarlo de Stop
     d['ATR_pct'] = (d['ATR'] / d['Close']) * 100
     
     return d.dropna()
@@ -85,35 +89,30 @@ def entrenar_ia(df_hist):
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR CON ESCUDO ATR DINÁMICO
+# 4. SIMULADOR FASE 29 (MACRO + ATR)
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_atr(ticker, dias=30):
-    df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
+def ejecutar_simulacion_fase29(ticker, dias):
+    # Descargamos más tiempo (3y) para asegurarnos de que la Media 200 tiene datos
+    df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
     
     liquidez = capital_total
     en_posicion = False
     acciones_compradas = 0
     precio_maximo_alcanzado = 0
-    stop_dinamico_actual = 0.0 # Guardará el % exacto en cada momento
     
     curva_capital = []
     ops = 0
     umbral_final = umbral_base + st.session_state['auto_bias']
     
+    # Recorremos el número de días seleccionado en el UI
     for i in range(len(df) - dias, len(df)):
         hoy = df.iloc[i]
         
-        # 1. GESTIONAR EXTRACCIÓN (Si estamos dentro)
+        # 1. GESTIONAR EXTRACCIÓN
         if en_posicion:
             precio_maximo_alcanzado = max(precio_maximo_alcanzado, hoy['Close'])
-            
-            # EL PARACAÍDAS INTELIGENTE: Calculamos la distancia permitida hoy
-            # Ejemplo: Si el ATR es 1.5% y el multiplicador 2.0x, el stop es 3.0%
             margen_permitido_pct = hoy['ATR_pct'] * multiplicador_atr
             precio_stop_loss = precio_maximo_alcanzado * (1 - (margen_permitido_pct / 100))
-            
-            # Guardamos la métrica para el dashboard
-            stop_dinamico_actual = margen_permitido_pct
             
             if hoy['Close'] <= precio_stop_loss or i == len(df) - 1:
                 valor_venta = acciones_compradas * hoy['Close']
@@ -121,14 +120,16 @@ def ejecutar_simulacion_atr(ticker, dias=30):
                 en_posicion = False
                 acciones_compradas = 0
                 precio_maximo_alcanzado = 0
-                stop_dinamico_actual = 0.0
                 
-        # 2. BUSCAR ENTRADA (Si estamos fuera)
+        # 2. BUSCAR ENTRADA
         if not en_posicion and i < len(df) - 1:
             estudio = df.iloc[:i]
             prob = entrenar_ia(estudio)
             
-            if prob >= umbral_final and hoy['Volatilidad'] > 0.5:
+            # EL LENTE MACRO: Solo operamos si estamos en Verano (Precio > Media 200)
+            pasa_macro = (hoy['Close'] > hoy['Media_200']) if filtro_macro else True
+            
+            if prob >= umbral_final and hoy['Volatilidad'] > 0.5 and pasa_macro:
                 ops += 1
                 en_posicion = True
                 precio_maximo_alcanzado = hoy['Close']
@@ -139,7 +140,6 @@ def ejecutar_simulacion_atr(ticker, dias=30):
                 
                 dinero_a_invertir = liquidez * exposicion_pct
                 liquidez -= comision_fija
-                
                 acciones_compradas = dinero_a_invertir / hoy['Close']
                 liquidez -= dinero_a_invertir
                 
@@ -147,23 +147,20 @@ def ejecutar_simulacion_atr(ticker, dias=30):
         valor_cartera_hoy = liquidez + (acciones_compradas * hoy['Close']) if en_posicion else liquidez
         curva_capital.append(valor_cartera_hoy)
         
-    # Extraemos el último ATR calculado para mostrarlo en la UI
-    ultimo_atr_pct = df.iloc[-1]['ATR_pct']
-        
-    return curva_capital, ops, umbral_final, ultimo_atr_pct
+    return curva_capital, ops, umbral_final
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🪂 Portal IA: Escudo ATR Inteligente")
+st.title("🔭 Portal IA: Lente Macro y Expansión")
 
 c1, c2, c3 = st.columns(3)
 umbral_f = umbral_base + st.session_state['auto_bias']
 
 with c1:
-    st.metric("Umbral de Decisión IA", f"{umbral_f:.1f}%", f"{st.session_state['auto_bias']}% Auto-Corrección")
+    st.metric("Umbral de Decisión IA", f"{umbral_f:.1f}%")
 with c2:
-    st.metric("Multiplicador de Turbulencia", f"{multiplicador_atr}x", "Ajuste del ATR")
+    st.metric("Horizonte de Análisis", f"{dias_simulacion} Días")
 with c3:
     if st.button("♻️ Reiniciar Memoria IA"):
         st.session_state['auto_bias'] = 0.0
@@ -171,24 +168,22 @@ with c3:
 
 st.divider()
 
-if st.button("🏁 Iniciar Simulación ATR (30 Días)"):
-    with st.spinner("Midiendo turbulencias del mercado y ajustando paracaídas..."):
-        curva, n_ops, u_final, atr_actual = ejecutar_simulacion_atr("QQQ")
+if st.button(f"🏁 Iniciar Simulación ({dias_simulacion} Días)"):
+    with st.spinner("Analizando regímenes de mercado y extendiendo el horizonte..."):
+        curva, n_ops, u_final = ejecutar_simulacion_fase29("QQQ", dias_simulacion)
         st.line_chart(curva)
         
         beneficio = curva[-1] - capital_total
         
-        # AUTO-CORRECCIÓN
-        if beneficio < 0 and n_ops > 2:
+        # AUTO-CORRECCIÓN MACRO
+        if beneficio < 0 and n_ops > 3:
             st.session_state['auto_bias'] += 0.5
-            st.error("Pérdida detectada. La IA sube el umbral ligeramente.")
+            st.error("Rendimiento negativo detectado. Aumentando la severidad de los filtros.")
         elif beneficio > 0:
             st.session_state['auto_bias'] = max(-5.0, st.session_state['auto_bias'] - 0.5)
-            st.success("Beneficio detectado. El Escudo ATR absorbió el ruido del mercado correctamente.")
+            st.success("¡Tendencia capturada con éxito! El sistema es rentable en este horizonte.")
 
         c_a, c_b, c_c = st.columns(3)
-        c_a.metric("Operaciones", n_ops)
-        c_b.metric("Beneficio Neto", f"{beneficio:.2f} €", delta="Línea base: -6.41 €")
+        c_a.metric("Operaciones Completadas", n_ops)
+        c_b.metric("Beneficio Neto Total", f"{beneficio:.2f} €", delta="Optimizado")
         c_c.metric("Capital Final", f"{curva[-1]:.2f} €")
-        
-        st.info(f"💡 **Dato Técnico:** El QQQ tiene hoy una turbulencia base del **{atr_actual:.2f}%**. Con tu multiplicador de {multiplicador_atr}x, el paracaídas saltará si cae un **{(atr_actual * multiplicador_atr):.2f}%** desde el pico.")
