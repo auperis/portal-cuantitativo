@@ -50,6 +50,12 @@ comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
 
+# NUEVO: Fase 35 - El Parking Inteligente
+st.sidebar.divider()
+st.sidebar.header("💰 Gestión de Liquidez (Parking)")
+apy_liquidez = st.sidebar.slider("Fondo Monetario (APY %)", 0.0, 10.0, 3.5, help="Rendimiento anual por tener el dinero esperando sin operar.")
+dias_simulacion = st.sidebar.selectbox("Días de Simulación Auditoría", [90, 180, 365], index=1)
+
 # ------------------------------------------------------------------------------
 # 3. MOTOR DE CÁLCULO
 # ------------------------------------------------------------------------------
@@ -91,6 +97,63 @@ def entrenar_ia_radar(ticker, dias_vision):
     hoy = df.iloc[-1]
     prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
     return prob, hoy
+
+def ejecutar_simulacion_parking(ticker, dias, dias_vision):
+    df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
+    
+    liquidez = capital_total
+    en_posicion = False
+    acciones_compradas = 0
+    precio_maximo = 0
+    intereses_acumulados = 0.0
+    curva_capital = []
+    ops = 0
+    umbral_final = umbral_base + st.session_state['auto_bias']
+    rendimiento_diario = (apy_liquidez / 100) / 365
+    
+    for i in range(len(df) - dias, len(df)):
+        hoy = df.iloc[i]
+        
+        if en_posicion:
+            precio_maximo = max(precio_maximo, hoy['Close'])
+            stop_pct = hoy['ATR_pct'] * multiplicador_atr
+            precio_stop = precio_maximo * (1 - (stop_pct / 100))
+            
+            if hoy['Close'] <= precio_stop or i == len(df) - 1:
+                liquidez += (acciones_compradas * hoy['Close']) - comision_fija
+                en_posicion = False
+                acciones_compradas = 0
+                precio_maximo = 0
+        else:
+            # LA MAGIA DEL PARKING: Ganamos dinero solo por esperar
+            interes_hoy = liquidez * rendimiento_diario
+            liquidez += interes_hoy
+            intereses_acumulados += interes_hoy
+            
+            if i < len(df) - dias_vision:
+                estudio = df.iloc[:i]
+                df_train = estudio.copy()
+                df_train['Target'] = np.where(df_train['Close'].shift(-dias_vision) > df_train['Close'] * 1.01, 1, 0)
+                df_train = df_train.dropna()
+                if len(df_train) >= 50:
+                    modelo = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
+                    modelo.fit(df_train[['Retorno', 'Volatilidad', 'RSI']], df_train['Target'])
+                    prob = modelo.predict_proba(estudio[['Retorno', 'Volatilidad', 'RSI']].iloc[-1:]) [0][1] * 100
+                    
+                    pasa_macro = (hoy['Close'] > hoy['Media_200']) if filtro_macro else True
+                    if prob >= umbral_final and hoy['Volatilidad'] > 0.5 and pasa_macro and hoy['RSI'] < 70:
+                        ops += 1
+                        en_posicion = True
+                        precio_maximo = hoy['Close']
+                        inv = liquidez * 0.2 
+                        liquidez -= comision_fija
+                        acciones_compradas = inv / hoy['Close']
+                        liquidez -= inv
+                        
+        valor_cartera = liquidez + (acciones_compradas * hoy['Close']) if en_posicion else liquidez
+        curva_capital.append(valor_cartera)
+        
+    return curva_capital, ops, intereses_acumulados
 
 # ------------------------------------------------------------------------------
 # 4. FUNCIONES DE TELEGRAM
@@ -198,4 +261,22 @@ with tab1:
                 st.warning("🛡️ **Análisis del Arquitecto:** Aunque no hay señales confirmadas de compra, el ranking superior te indica qué activos están acumulando fuerza. Vigila a los que están 'EN OBSERVACIÓN', ya que podrían dar señal verde mañana.")
 
 with tab2:
-    st.write("Módulo de memoria IA en reposo.")
+    st.subheader("🔬 Auditoría de Memoria y Parking Inteligente")
+    st.write("Mientras el mercado está 'Descartado', tu liquidez genera intereses pasivos.")
+    
+    activo_sim = st.selectbox("Selecciona un activo para auditar (Ej. QQQ, SPY):", ["QQQ", "SPY", "GLD"])
+    
+    if st.button(f"🏁 Simular {dias_simulacion} Días con APY del {apy_liquidez}%"):
+        with st.spinner("Calculando operaciones e intereses pasivos acumulados..."):
+            curva, n_ops, int_acumulados = ejecutar_simulacion_parking(activo_sim, dias_simulacion, dias_vision_ia)
+            
+            st.line_chart(curva)
+            beneficio_total = curva[-1] - capital_total
+            
+            c_a, c_b, c_c = st.columns(3)
+            c_a.metric("Operaciones Realizadas", n_ops, help="Veces que salimos del parking para cazar una tendencia.")
+            c_b.metric("Intereses por Esperar", f"+{int_acumulados:.2f} €", delta="Dinero 100% Pasivo")
+            c_c.metric("Beneficio Neto Total", f"{beneficio_total:.2f} €", delta=f"Capital Final: {curva[-1]:.2f} €")
+            
+            if int_acumulados > 0:
+                st.success(f"✅ Has ganado **{int_acumulados:.2f} €** simplemente por tener paciencia y no forzar operaciones cuando la IA decía 'DESCARTADO'.")
