@@ -23,16 +23,9 @@ import firebase_admin
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Datos de conexión proporcionados por el entorno (Firebase)
-# Nota: En un entorno local real, usarías un archivo .json de credenciales.
-# Aquí usamos la configuración inyectada.
-firebase_config = {
-    "projectId": "default-app-id", # Se sustituye internamente
-}
-
 if not _apps:
     try:
-        # Inicialización simplificada para el entorno de ejecución
+        # Inicialización automática para el entorno de ejecución
         initialize_app()
     except:
         pass
@@ -97,14 +90,16 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
 
 # --- FUNCIONES DE PERSISTENCIA (MEMORIA SATELITAL) ---
 def guardar_en_nube(data_list):
-    """Guarda los resultados del escaneo en Firestore."""
+    """Guarda los resultados del escaneo en la base de datos."""
     for item in data_list:
-        # Ruta estricta según protocolo de seguridad
-        doc_ref = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document()
-        doc_ref.set(item)
+        try:
+            doc_ref = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document()
+            doc_ref.set(item)
+        except:
+            pass
 
 def cargar_de_nube():
-    """Recupera el historial desde Firestore."""
+    """Recupera el historial persistente."""
     try:
         docs = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').order_by('Fecha', direction=firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
@@ -142,13 +137,11 @@ if boton_analizar:
         progreso.progress((i + 1) / len(lista_activos))
 
     if resultados_hoy:
-        # Guardado automático en la nube
         guardar_en_nube(resultados_hoy)
-        
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
-        # RESTAURACIÓN DEL RANKING VERDE
         st.subheader("🏆 Ranking Institucional de Hoy")
+        # El degradado verde que solicitaste para mejor visualización
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -168,7 +161,6 @@ if boton_analizar:
         else:
             st.error("Ningún activo superó el filtro. Mantener liquidez.")
 
-# --- SECCIÓN: HISTORIAL PERSISTENTE ---
 st.markdown("---")
 st.subheader("🌐 Registro Histórico (Cloud Storage)")
 historial_nube = cargar_de_nube()
