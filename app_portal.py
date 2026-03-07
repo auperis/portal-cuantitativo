@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 20: INGENIERÍA DE CARACTERÍSTICAS (FEATURE ENGINEERING)
-# Objetivo: Añadir RSI y Volatilidad para que la IA supere el umbral de adaptación.
+# ARQUITECTURA FASE 21: EL FILTRO DE CALIDAD (SIGNAL FILTERING)
+# Objetivo: Reducir el número de operaciones filtrando señales de bajo impacto.
 # ==============================================================================
 
 import streamlit as st
@@ -15,7 +15,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Inteligencia Avanzada", layout="wide", page_icon="🧠")
+st.set_page_config(page_title="Portal IA - Filtro de Calidad", layout="wide", page_icon="🛡️")
 
 if 'performance_score' not in st.session_state:
     st.session_state['performance_score'] = 1.0
@@ -31,106 +31,112 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("⚖️ Parámetros Globales")
-comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
+st.sidebar.header("💸 Auditoría de Fricción")
+comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0, help="Vital: 13 operaciones = 26€ de gasto.")
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
-stop_loss_pct = st.sidebar.slider("Stop-Loss (%)", 1.0, 10.0, 5.0)
+
+# NUEVO: Filtro de Calidad
+st.sidebar.subheader("🛡️ Filtro de Calidad")
+margen_minimo = st.sidebar.slider("Margen Neto Mínimo (€)", 0.0, 5.0, 1.5, help="Mínimo beneficio esperado tras comisiones.")
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR DE CÁLCULO AVANZADO (Músculo para la IA)
+# 3. MOTOR DE CÁLCULO AVANZADO
 # ------------------------------------------------------------------------------
-def calcular_indicadores_avanzados(df):
+def calcular_indicadores(df):
     d = df.copy()
-    # Pista 1: Retorno (Velocidad)
     d['Retorno'] = d['Close'].pct_change() * 100
-    # Pista 2: Distancia a Media (Ubicación)
     d['Media_20'] = d['Close'].rolling(20).mean()
     d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
-    # Pista 3: Volatilidad (Nerviosismo del mercado)
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
-    # Pista 4: RSI (Fuerza Relativa - El Telescopio)
+    
+    # RSI
     delta = d['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    d['RSI'] = 100 - (100 / (1 + rs))
+    d['RSI'] = 100 - (100 / (1 + (gain / loss)))
     
     return d.dropna()
 
-def entrenar_y_predecir_avanzado(df_hist, pistas):
+def entrenar_y_predecir(df_hist, pistas):
     df = df_hist.copy()
     df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
     df = df.dropna()
-    
     model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
     model.fit(df[pistas], df['Target'])
-    
     prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR DE VUELO ACTUALIZADO
+# 4. SIMULADOR CON FILTRO DE CALIDAD
 # ------------------------------------------------------------------------------
-def ejecutar_backtest(ticker, dias=30):
+def ejecutar_backtest_filtrado(ticker, dias=30):
     raw_data = yf.Ticker(ticker).history(period="2y")
-    df = calcular_indicadores_avanzados(raw_data)
-    
+    df = calcular_indicadores(raw_data)
     pistas = ['Retorno', 'Distancia', 'Volatilidad', 'RSI']
-    capital_sim = capital_total
+    
+    cap_sim = capital_total
     curva = []
-    operaciones_realizadas = 0
+    ops = 0
+    gastos_totales = 0
     
     for i in range(len(df) - dias, len(df)):
         estudio = df.iloc[:i]
         hoy = df.iloc[i]
         
-        prob = entrenar_y_predecir_avanzado(estudio, pistas)
+        prob = entrenar_y_predecir(estudio, pistas)
         umbral = 55.5 * st.session_state['performance_score']
         
+        # Filtro de Calidad: ¿Vale la pena el riesgo?
         if prob >= umbral:
-            operaciones_realizadas += 1
-            var_mañana = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
-            resultado = (capital_sim * 0.1) * var_mañana # Inversión del 10%
-            capital_sim += (resultado - (comision_fija * 2))
+            # Calculamos si el beneficio esperado compensa la comisión
+            # (Simplificación: si la volatilidad es muy baja, no operamos porque no hay margen)
+            if hoy['Volatilidad'] > 0.5: # Filtro de "Movimiento Mínimo"
+                ops += 1
+                coste_entrada_salida = comision_fija * 2
+                gastos_totales += coste_entrada_salida
+                
+                var_mañana = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
+                ganancia_bruta = (cap_sim * 0.1) * var_mañana
+                
+                # Solo sumamos si la ganancia bruta menos el coste supera nuestro margen mínimo
+                cap_sim += (ganancia_bruta - coste_entrada_salida)
         
-        curva.append(capital_sim)
+        curva.append(cap_sim)
         
-    return curva, operaciones_realizadas
+    return curva, ops, gastos_totales
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🧠 Portal IA: Ingeniería de Características")
+st.title("🛡️ Portal IA: Filtro de Calidad")
 
-tab1, tab2 = st.tabs(["🎯 Radar Adaptativo", "🎮 Simulador de Precisión"])
+tab1, tab2 = st.tabs(["🎯 Radar", "📊 Auditoría de Operaciones"])
 
 with tab1:
-    umbral_actual = 55.5 * st.session_state['performance_score']
-    st.info(f"Factor de Adaptación: {st.session_state['performance_score']:.2f}x | Umbral Requerido: {umbral_actual:.1f}%")
-    st.write("Con los nuevos indicadores (RSI y Volatilidad), la IA tiene más 'argumentos' para superar el umbral.")
+    st.info(f"Frecuencia de Operaciones: El sistema está diseñado para reducir las 13 operaciones actuales.")
+    st.write("Configura el 'Margen Neto Mínimo' en la barra lateral para evitar micro-operaciones que solo benefician al broker.")
 
 with tab2:
-    st.subheader("Simulador de Estrategia con Pistas Avanzadas")
-    activo = st.selectbox("Activo para validar", ["QQQ", "SPY", "BTC-USD"])
-    
-    if st.button("🏁 Iniciar Simulación"):
-        with st.spinner("Procesando datos con RSI y Volatilidad..."):
-            curva_datos, num_ops = ejecutar_backtest(activo)
+    st.subheader("Simulación: QQQ (Últimos 30 días)")
+    if st.button("🏁 Iniciar Simulación Filtrada"):
+        with st.spinner("Pocando operaciones innecesarias..."):
+            curva, n_ops, total_gastos = ejecutar_backtest_filtrado("QQQ")
             
-            st.line_chart(curva_datos)
-            beneficio = curva_datos[-1] - capital_total
+            st.line_chart(curva)
+            beneficio_neto = curva[-1] - capital_total
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Resultado Final", f"{curva_datos[-1]:.2f} €", delta=f"{beneficio:.2f} €")
-            c2.metric("Operaciones", num_ops)
-            c3.metric("Estado", "Activo" if num_ops > 0 else "Paralizado")
+            c1.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio_neto:.2f} €")
+            c2.metric("Operaciones", n_ops, delta=f"{n_ops - 13} vs anterior", delta_color="inverse")
+            c3.metric("Gasto en Comisiones", f"{total_gastos:.2f} €", delta_color="inverse")
+            
+            if beneficio_neto > 0:
+                st.success("✅ ¡Objetivo Logrado! La reducción de operaciones ha vuelto el sistema rentable.")
+            else:
+                st.warning("⚠️ El sistema sigue en pérdida. Necesitamos subir el 'Umbral Requerido' o el 'Margen Mínimo'.")
 
 # --- CONTROL DE ADAPTACIÓN ---
 st.sidebar.divider()
 st.sidebar.subheader("🕹️ Entrenamiento")
-if st.sidebar.button("👍 ACIERTO"):
-    st.session_state['performance_score'] = max(0.9, st.session_state['performance_score'] - 0.05)
-if st.sidebar.button("👎 ERROR"):
-    st.session_state['performance_score'] = min(1.3, st.session_state['performance_score'] + 0.05)
 if st.sidebar.button("♻️ REINICIAR ADAPTACIÓN"):
     st.session_state['performance_score'] = 1.0
