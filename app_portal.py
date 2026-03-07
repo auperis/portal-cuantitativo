@@ -1,6 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 26: OPTIMIZADOR DE EXPOSICIÓN (DYNAMIC EXPOSURE)
-# Objetivo: Ajustar el tamaño de la apuesta basándose en la fuerza de la señal.
+# ARQUITECTURA FASE 27: EL ESCUDO DINÁMICO (TRAILING STOP LOGIC)
+# Objetivo: Permitir que las operaciones ganadoras crezcan con el tiempo 
+# (Let Winners Run) y cerrar automáticamente si la tendencia se invierte.
 # ==============================================================================
 
 import streamlit as st
@@ -15,7 +16,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Exposición Dinámica", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="Portal IA - Escudo Dinámico", layout="wide", page_icon="🛡️")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -33,7 +34,12 @@ chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 st.sidebar.divider()
 st.sidebar.header("⚖️ Diales de Precisión")
 umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
-max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0, help="Máximo capital a arriesgar en una sola operación.")
+max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
+
+st.sidebar.divider()
+st.sidebar.header("🛡️ Escudo Dinámico (Extracción)")
+# NUEVO: Ajuste del Trailing Stop (La cuerda del paracaídas)
+stop_loss_pct = st.sidebar.slider("Trailing Stop (%)", 1.0, 10.0, 4.0, help="Vende si el precio cae este % desde el máximo alcanzado.")
 
 st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
@@ -65,51 +71,80 @@ def entrenar_ia(df_hist):
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR CON EXPOSICIÓN DINÁMICA
+# 4. SIMULADOR CON TRAILING STOP (MÁQUINA DE ESTADOS)
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_exposicion(ticker, dias=30):
+def ejecutar_simulacion_realista(ticker, dias=30):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
-    cap_sim = capital_total
-    curva = []
-    ops = 0
     
+    # Variables de la "Máquina de Estados"
+    liquidez = capital_total
+    en_posicion = False
+    acciones_compradas = 0
+    precio_maximo_alcanzado = 0
+    
+    curva_capital = []
+    ops = 0
     umbral_final = umbral_base + st.session_state['auto_bias']
     
     for i in range(len(df) - dias, len(df)):
-        estudio = df.iloc[:i]
         hoy = df.iloc[i]
-        prob = entrenar_ia(estudio)
         
-        if prob >= umbral_final and hoy['Volatilidad'] > 0.5:
-            ops += 1
-            # ESCALADO DINÁMICO: 
-            # Si prob es umbral_final -> exp = 5%
-            # Si prob es 100% -> exp = max_exposicion
-            rango_prob = 100 - umbral_final
-            exceso_prob = prob - umbral_final
-            factor_esfuerzo = exceso_prob / rango_prob
-            exposicion_real = 0.05 + (factor_esfuerzo * (max_exposicion/100 - 0.05))
+        # 1. SI ESTAMOS DENTRO DEL GLOBO (Gestionar Extracción)
+        if en_posicion:
+            # Actualizamos la altura máxima alcanzada por el globo
+            precio_maximo_alcanzado = max(precio_maximo_alcanzado, hoy['Close'])
+            # Calculamos dónde está la cuerda de seguridad
+            precio_stop_loss = precio_maximo_alcanzado * (1 - (stop_loss_pct / 100))
             
-            var_futura = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
-            beneficio_op = (cap_sim * exposicion_real * var_futura) - (comision_fija * 2)
-            cap_sim += beneficio_op
+            # Si el globo cae por debajo de la cuerda, o es el último día de simulación: SALTAMOS
+            if hoy['Close'] <= precio_stop_loss or i == len(df) - 1:
+                valor_venta = acciones_compradas * hoy['Close']
+                liquidez += (valor_venta - comision_fija) # Sumamos liquidez, pagamos comisión de venta
+                en_posicion = False
+                acciones_compradas = 0
+                precio_maximo_alcanzado = 0
+                
+        # 2. SI ESTAMOS FUERA DEL GLOBO (Buscar Entrada)
+        # Solo miramos si no es el último día (no tiene sentido comprar el último día)
+        if not en_posicion and i < len(df) - 1:
+            estudio = df.iloc[:i]
+            prob = entrenar_ia(estudio)
             
-        curva.append(cap_sim)
-    
-    return curva, ops, umbral_final
+            if prob >= umbral_final and hoy['Volatilidad'] > 0.5:
+                ops += 1 # Registramos la operación
+                en_posicion = True
+                precio_maximo_alcanzado = hoy['Close']
+                
+                # Escalado Dinámico de la Apuesta
+                rango_prob = 100 - umbral_final
+                factor = min(max((prob - umbral_final) / rango_prob, 0), 1) if rango_prob > 0 else 0
+                exposicion_pct = 0.05 + (factor * (max_exposicion/100 - 0.05))
+                
+                dinero_a_invertir = liquidez * exposicion_pct
+                liquidez -= comision_fija # Pagamos comisión de entrada
+                
+                acciones_compradas = dinero_a_invertir / hoy['Close']
+                liquidez -= dinero_a_invertir # Retiramos el dinero de la liquidez para comprar
+                
+        # 3. FOTOGRAFÍA DIARIA DEL PATRIMONIO
+        # El patrimonio total es el dinero líquido MÁS lo que valen nuestras acciones hoy
+        valor_cartera_hoy = liquidez + (acciones_compradas * hoy['Close']) if en_posicion else liquidez
+        curva_capital.append(valor_cartera_hoy)
+        
+    return curva_capital, ops, umbral_final
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("⚖️ Portal IA: Optimizador de Exposición")
+st.title("🛡️ Portal IA: El Escudo Dinámico (Trailing Stop)")
 
 c1, c2, c3 = st.columns(3)
 umbral_f = umbral_base + st.session_state['auto_bias']
 
 with c1:
-    st.metric("Umbral de Seguridad", f"{umbral_f:.1f}%", f"+{st.session_state['auto_bias']}% IA Bias")
+    st.metric("Umbral de Seguridad", f"{umbral_f:.1f}%", f"{st.session_state['auto_bias']}% IA Bias")
 with c2:
-    st.metric("Capital en Riesgo", f"{capital_total} €")
+    st.metric("Trailing Stop", f"-{stop_loss_pct}%", "Cuerda de seguridad")
 with c3:
     if st.button("♻️ Reiniciar Aprendizaje"):
         st.session_state['auto_bias'] = 0.0
@@ -117,19 +152,21 @@ with c3:
 
 st.divider()
 
-if st.button("🏁 Iniciar Simulación con Escalado"):
-    with st.spinner("Calculando tamaños de apuesta dinámicos..."):
-        curva, n_ops, u_final = ejecutar_simulacion_exposicion("QQQ")
+if st.button("🏁 Iniciar Simulación Avanzada (Multi-día)"):
+    with st.spinner("Simulando entradas francotirador y salidas con Escudo Dinámico..."):
+        curva, n_ops, u_final = ejecutar_simulacion_realista("QQQ")
         st.line_chart(curva)
         
         beneficio = curva[-1] - capital_total
         
-        # AUTO-CORRECCIÓN ACTUALIZADA
         if beneficio < 0 and n_ops > 2:
-            st.session_state['auto_bias'] += 1.5
-            st.error(f"Pérdida detectada. La IA se vuelve más conservadora (+1.5% al umbral).")
+            st.session_state['auto_bias'] += 1.0
+            st.error("Pérdida detectada. La IA sube el umbral para ser más estricta.")
         elif beneficio > 5:
             st.session_state['auto_bias'] = max(-5.0, st.session_state['auto_bias'] - 0.5)
-            st.success(f"Beneficio detectado. La IA confía más en su estrategia (-0.5% al umbral).")
+            st.success("Beneficio detectado. El Trailing Stop funcionó y capturó la tendencia.")
 
-        st.write(f"**Análisis:** Se realizaron {n_ops} operaciones con un beneficio neto de {beneficio:.2f} €.")
+        c_a, c_b, c_c = st.columns(3)
+        c_a.metric("Operaciones (Trades cerrados)", n_ops)
+        c_b.metric("Beneficio Neto (Comisiones descontadas)", f"{beneficio:.2f} €")
+        c_c.metric("Capital Final", f"{curva[-1]:.2f} €")
