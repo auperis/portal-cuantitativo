@@ -7,4 +7,3 @@ scikit-learn
 matplotlib
 firebase-admin
 google-cloud-firestore
-4.  Espera 1 minuto a que Streamlit termine de "cocinar" los nuevos suministros.
