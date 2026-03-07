@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 23: DETECTOR DE CUELLOS DE BOTELLA (BOTTLENECK DIAGNOSIS)
-# Objetivo: Identificar qué filtro está bloqueando las operaciones para ajustar
-# la sensibilidad del Sniper y recuperar la rentabilidad.
+# ARQUITECTURA FASE 24: OPTIMIZADOR DE TOLERANCIA (TOLERANCE LOGIC)
+# Objetivo: Flexibilizar los filtros para permitir operativa en mercados 
+# en recuperación sin comprometer la seguridad de los 1.000 €.
 # ==============================================================================
 
 import streamlit as st
@@ -16,13 +16,13 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Diagnóstico", layout="wide", page_icon="🔬")
+st.set_page_config(page_title="Portal IA - Tolerancia", layout="wide", page_icon="⚖️")
 
 if 'performance_score' not in st.session_state:
     st.session_state['performance_score'] = 1.0
 
 # ------------------------------------------------------------------------------
-# 2. BARRA LATERAL: AJUSTES DE INFRAESTRUCTURA
+# 2. BARRA LATERAL: AJUSTES DE PRECISIÓN
 # ------------------------------------------------------------------------------
 st.sidebar.header("📡 Comunicaciones (ADN)")
 TOKEN_ARQUITECTO = "8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA"
@@ -32,15 +32,22 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("💸 Parámetros de Fricción")
+st.sidebar.header("⚖️ Diales de Tolerancia")
+
+# Dial 1: Probabilidad
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0, 
+                                 help="Bajamos ligeramente de 60% a 58% para dar más aire.")
+
+# Dial 2: Margen de Tendencia (LA CLAVE)
+margen_tendencia = st.sidebar.slider("Margen de Tendencia (%)", 0.0, 5.0, 1.5, 
+                                      help="Permite operar si el precio está hasta un 1.5% por debajo de la Media 50.")
+
+# Dial 3: Volatilidad
+vol_min = st.sidebar.slider("Volatilidad Mínima", 0.0, 2.0, 0.5)
+
+st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
-
-# AJUSTES DE SENSIBILIDAD (EL DIAL DEL FRANCOTIRADOR)
-st.sidebar.subheader("🎯 Diales del Sniper")
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 60.0)
-vol_min = st.sidebar.slider("Volatilidad Mínima", 0.0, 2.0, 0.6)
-filtro_tendencia = st.sidebar.checkbox("Activar Filtro Tendencia (Media 50)", value=True)
 
 # ------------------------------------------------------------------------------
 # 3. MOTOR DE CÁLCULO
@@ -49,9 +56,9 @@ def calcular_indicadores(df):
     d = df.copy()
     d['Retorno'] = d['Close'].pct_change() * 100
     d['Media_50'] = d['Close'].rolling(50).mean()
-    d['Media_20'] = d['Close'].rolling(20).mean()
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
-    # RSI
+    
+    # RSI (Indicador de agotamiento)
     delta = d['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -69,16 +76,14 @@ def entrenar_ia(df_hist):
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR CON DIAGNÓSTICO DE FILTROS
+# 4. SIMULADOR CON LÓGICA DE TOLERANCIA
 # ------------------------------------------------------------------------------
-def ejecutar_diagnostico(ticker, dias=30):
+def ejecutar_simulacion_tolerante(ticker, dias=30):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
-    pistas = ['Retorno', 'Volatilidad', 'RSI']
-    
     cap_sim = capital_total
     curva = []
-    rechazos = {"Probabilidad": 0, "Volatilidad": 0, "Tendencia": 0}
-    exitos = 0
+    ops = 0
+    rechazos = {"Prob": 0, "Vol": 0, "Tend": 0}
     
     for i in range(len(df) - dias, len(df)):
         estudio = df.iloc[:i]
@@ -86,54 +91,60 @@ def ejecutar_diagnostico(ticker, dias=30):
         prob = entrenar_ia(estudio)
         umbral_actual = umbral_base * st.session_state['performance_score']
         
-        # --- EL ESCÁNER DE RECHAZOS ---
+        # --- LÓGICA DE TOLERANCIA ---
         pasa_prob = prob >= umbral_actual
         pasa_vol = hoy['Volatilidad'] > vol_min
-        pasa_tend = (hoy['Close'] > hoy['Media_50']) if filtro_tendencia else True
+        
+        # Tolerancia: Precio > (Media 50 - Margen %)
+        limite_inferior_tendencia = hoy['Media_50'] * (1 - (margen_tendencia / 100))
+        pasa_tend = hoy['Close'] >= limite_inferior_tendencia
         
         if pasa_prob and pasa_vol and pasa_tend:
-            exitos += 1
+            ops += 1
             var_futura = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
             cap_sim += (cap_sim * 0.2 * var_futura) - (comision_fija * 2)
         else:
-            if not pasa_prob: rechazos["Probabilidad"] += 1
-            if not pasa_vol: rechazos["Volatilidad"] += 1
-            if not pasa_tend: rechazos["Tendencia"] += 1
+            if not pasa_prob: rechazos["Prob"] += 1
+            if not pasa_vol: rechazos["Vol"] += 1
+            if not pasa_tend: rechazos["Tend"] += 1
             
         curva.append(cap_sim)
         
-    return curva, exitos, rechazos
+    return curva, ops, rechazos
 
 # ------------------------------------------------------------------------------
-# 5. DASHBOARD DE DIAGNÓSTICO
+# 5. DASHBOARD
 # ------------------------------------------------------------------------------
-st.title("🔬 Portal IA: Diagnóstico de Cuellos de Botella")
+st.title("⚖️ Portal IA: Optimizador de Tolerancia")
 
-tab1, tab2 = st.tabs(["🚀 Control de Vuelo", "📊 Laboratorio de Simulación"])
+tab1, tab2 = st.tabs(["🚀 Control de Radar", "📊 Test de Tolerancia"])
 
 with tab1:
-    umbral_f = umbral_base * st.session_state['performance_score']
-    st.info(f"Filtro Sniper: Probabilidad > {umbral_f:.1f}% | Volatilidad > {vol_min}")
+    st.info(f"Estado del Sistema: Adaptación a {st.session_state['performance_score']:.2f}x")
     if st.sidebar.button("♻️ REINICIAR ADAPTACIÓN"):
         st.session_state['performance_score'] = 1.0
         st.toast("Sistema reseteado")
 
 with tab2:
-    st.subheader("Simulación QQQ: ¿Por qué no operamos?")
-    if st.button("🏁 Iniciar Diagnóstico"):
-        with st.spinner("Analizando causas de parálisis..."):
-            curva, n_ops, logs_rechazo = ejecutar_diagnostico("QQQ")
+    st.subheader("Simulación QQQ: Rompiendo la Parálisis")
+    if st.button("🏁 Ejecutar Test de Tolerancia"):
+        with st.spinner("Ajustando márgenes y recalculando señales..."):
+            curva, n_ops, rechazos = ejecutar_simulacion_tolerante("QQQ")
             
             st.line_chart(curva)
+            beneficio = curva[-1] - capital_total
             
-            # Visualización de los "Tapones"
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Operaciones", n_ops)
-            c2.metric("Tapón Probabilidad", logs_rechazo["Probabilidad"], delta="Filtro IA", delta_color="inverse")
-            c3.metric("Tapón Volatilidad", logs_rechazo["Volatilidad"], delta="Mercado Lento", delta_color="inverse")
-            c4.metric("Tapón Tendencia", logs_rechazo["Tendencia"], delta="Mercado Bajista", delta_color="inverse")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Operaciones", n_ops, delta=f"{n_ops} vs 0 anterior")
+            c2.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio:.2f} €")
+            c3.metric("Tapón Tendencia", rechazos["Tend"], delta="Filtro Flexibilizado", delta_color="normal")
             
-            if n_ops == 0:
-                st.warning("⚠️ PARÁLISIS DETECTADA: Identifica cuál es el número más alto en los 'Tapones' y ajusta el dial en la barra lateral.")
-            else:
-                st.success(f"¡Sistema reactivado! Capital final: {curva[-1]:.2f} €")
+            if n_ops > 0 and beneficio > -10:
+                st.success(f"🎯 ¡CONEXIÓN RECUPERADA! Has logrado realizar {n_ops} operaciones ajustando la tolerancia.")
+            elif n_ops == 0:
+                st.warning("⚠️ Sigue habiendo parálisis. Prueba a subir el 'Margen de Tendencia' al 3% o bajar la 'Probabilidad' al 55%.")
+
+st.markdown("""
+---
+**Nota del Arquitecto:** Al permitir un **Margen de Tendencia**, estamos aceptando que el mercado puede estar un poco "sucio" (bajista), pero confiamos en que la IA ha detectado el giro antes que el indicador tradicional. Para 1.000 €, esto es lo que marca la diferencia entre entrar tarde o entrar en el momento justo.
+""")
