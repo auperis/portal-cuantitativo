@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (VERSIÓN V7): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Inyección explícita del Project ID para eliminar el ValueError.
+# ARQUITECTURA FASE 11 (VERSIÓN V8): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Solucionar la 'Amnesia de Identidad' del Project ID en Streamlit Cloud.
 # ==============================================================================
 
 import streamlit as st
@@ -20,49 +20,57 @@ from google.cloud import firestore as google_firestore
 from firebase_admin import initialize_app, _apps
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (LA LLAVE MAESTRA)
+# 1. INICIALIZACIÓN DE LA NUBE (PROTOCOLO DE IDENTIDAD ROBUSTO)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# 1.1. Extracción de credenciales del entorno
+# 1.1. Buscamos el ID del proyecto en múltiples fuentes
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_raw = os.environ.get('__firebase_config')
 
-# 1.2. Parseo de seguridad del Project ID
 project_id = None
+
+# Intento A: Desde la variable de configuración inyectada por el entorno
 if firebase_config_raw:
     try:
         config_dict = json.loads(firebase_config_raw)
         project_id = config_dict.get('projectId')
-    except Exception as e:
-        st.sidebar.error(f"Error parseando config: {e}")
+    except:
+        pass
 
-# 1.3. Inicialización del cliente con ID EXPLÍCITO
-# Usamos google.cloud.firestore.Client directamente para mayor control
+# Intento B: Si el Intento A falla, buscamos en secretos de Streamlit (si existen)
+if not project_id:
+    try:
+        project_id = st.secrets["general"]["project_id"]
+    except:
+        pass
+
+# 1.2. Inicialización Crítica del Cliente
+db = None
 try:
     if project_id:
-        # Forzamos el ID en el sistema y en el cliente
+        # Forzamos la identidad en la variable de entorno que busca Firestore por defecto
         os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+        
+        # Inicializamos el cliente pasando el ID directamente al constructor
         db = google_firestore.Client(project=project_id)
         
-        # Inicializamos el entorno Firebase si no existe
+        # Inicializamos Firebase Admin para otros servicios si es necesario
         if not _apps:
             initialize_app(options={'projectId': project_id})
             
-        st.sidebar.success(f"📡 Conectado a: {project_id}")
+        st.sidebar.success(f"📡 Satélite Sintonizado: {project_id}")
     else:
-        # Fallback por si las variables de entorno no están listas
-        db = google_firestore.Client()
-        st.sidebar.warning("⚠️ Usando ID por defecto (Posible fallo)")
+        st.sidebar.error("❌ Error de Identidad: No se detectó Project ID.")
+        st.sidebar.info("Revisa la integración de base de datos en Streamlit Cloud.")
 except Exception as e:
-    st.error(f"Error crítico en la conexión directa: {e}")
-    db = None
+    st.sidebar.error(f"⚠️ Fallo de Conexión: {e}")
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL (Barra Lateral)
 # ------------------------------------------------------------------------------
 st.sidebar.header("📡 Configuración del Radar")
-tickers_input = st.sidebar.text_input("Lista de Activos", value="SPY, GLD, QQQ, TLT, BTC-USD")
+tickers_input = st.sidebar.text_input("Activos (separados por coma)", value="SPY, GLD, QQQ, TLT, BTC-USD")
 
 st.sidebar.header("🛡️ Gestión de Riesgo")
 capital_usuario = st.sidebar.number_input("Capital Total (€)", min_value=100, value=1000)
@@ -118,18 +126,17 @@ def guardar_en_nube(data_list):
     if db is None: return
     for item in data_list:
         try:
-            # Ruta oficial requerida para permisos de escritura
+            # Ruta obligatoria para permisos de escritura: artifacts/{appId}/public/data/{collection}
             db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').document().set(item)
-        except Exception as e:
-            pass
+        except: pass
 
 def cargar_de_nube():
     if db is None: return []
     try:
+        # Recuperamos los últimos 10 registros
         docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
-    except:
-        return []
+    except: return []
 
 # ------------------------------------------------------------------------------
 # 4. EJECUCIÓN WEB
@@ -162,10 +169,15 @@ if boton_analizar:
         progreso.progress((i + 1) / len(lista_activos))
 
     if resultados_hoy:
-        guardar_en_nube(resultados_hoy)
+        # Guardamos en la nube solo si la conexión db está activa
+        if db:
+            guardar_en_nube(resultados_hoy)
+            st.toast("✅ Predicciones sincronizadas con la nube.")
+        
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
+        # Mostramos el ranking con el degradado verde que facilita la lectura
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -181,7 +193,6 @@ if boton_analizar:
             c2.metric("Inversión Sugerida", f"{inv:.2f} €")
             c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
             st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Riesgo bloqueado.")
-            st.toast("✅ Sincronización con la nube completada.")
         else:
             st.error("Convicción insuficiente. Mantenemos liquidez.")
 
@@ -193,4 +204,4 @@ if historial_nube:
     df_cloud = pd.DataFrame(historial_nube)
     st.table(df_cloud.head(10))
 else:
-    st.caption("No se detectan registros históricos en la nube. Inicia un análisis para comenzar el historial.")
+    st.caption("No se detectan registros históricos en la nube. Realiza un análisis para comenzar el historial.")
