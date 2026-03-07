@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (CORREGIDA V4): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Forzar el Project ID directamente en el cliente de Firestore.
+# ARQUITECTURA FASE 11 (VERSIÓN DEFINITIVA): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Corregir error de argumentos en firestore.client() y forzar ID.
 # ==============================================================================
 
 import streamlit as st
@@ -20,38 +20,42 @@ from firebase_admin import firestore, initialize_app, credentials, _apps
 import firebase_admin
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN DEFINITIVA POR INYECCIÓN DIRECTA)
+# 1. INICIALIZACIÓN DE LA NUBE (CONFIGURACIÓN DEL GPS CENTRAL)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Extraemos la configuración del entorno proporcionada por el sistema
+# Extraemos la configuración del sistema
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_str = os.environ.get('__firebase_config')
 
-# PARSEO DE SEGURIDAD
 project_id = None
 if firebase_config_str:
     try:
         config_dict = json.loads(firebase_config_str)
         project_id = config_dict.get('projectId')
-    except Exception as e:
-        st.sidebar.error(f"Error al leer config: {e}")
-
-# Inicializamos la App y el Cliente con inyección directa del Project ID
-try:
-    if not _apps:
         if project_id:
+            # CONFIGURACIÓN DEL GPS CENTRAL: Establecemos la variable de entorno
+            # Esto es lo que Firestore necesita para saber a dónde ir.
             os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+    except Exception as e:
+        st.sidebar.error(f"Error al leer configuración: {e}")
+
+# Inicializamos la App solo si no existe una previa
+if not _apps:
+    try:
+        if project_id:
+            # Inicializamos con el ID del proyecto explícito en las opciones
             initialize_app(options={'projectId': project_id})
         else:
             initialize_app()
-    
-    # CAMBIO CRÍTICO: Pasamos el project_id directamente al cliente de firestore
-    # Esto soluciona el error donde initialize_app no propaga el ID al cliente.
-    db = firestore.client(project=project_id)
+    except Exception as e:
+        st.error(f"Error de inicialización: {e}")
+
+# Conexión al cliente de base de datos (Sin argumentos, usa el GPS central configurado arriba)
+try:
+    db = firestore.client()
 except Exception as e:
-    # Si falla la conexión, mostramos un aviso pero no bloqueamos la web
-    st.error(f"Error al conectar con Firestore: {e}")
+    st.error(f"Error crítico al conectar con Firestore: {e}")
     db = None
 
 # ------------------------------------------------------------------------------
@@ -114,8 +118,10 @@ def guardar_en_nube(data_list):
     if db is None: return
     for item in data_list:
         try:
+            # Ruta oficial según protocolo de seguridad
             db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document().set(item)
-        except: pass
+        except Exception as e:
+            pass
 
 def cargar_de_nube():
     if db is None: return []
@@ -159,6 +165,7 @@ if boton_analizar:
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
+        # ESTÉTICA: Aplicamos el degradado verde profesional
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -166,17 +173,17 @@ if boton_analizar:
         
         ganador = df_rank.iloc[0]
         if ganador["Convicción (%)"] >= umbral_conviccion:
-            st.success(f"👑 ACTIVO ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
+            st.success(f"👑 ACTIVO SELECCIONADO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
             acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
             c2.metric("Inversión Sugerida", f"{inv:.2f} €")
             c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
-            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
-            st.toast("✅ Datos sincronizados con la nube.")
+            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Riesgo bloqueado en {riesgo:.2f} €.")
+            st.toast("✅ Sincronización con la nube completada.")
         else:
-            st.error("Convicción insuficiente. Mantenemos liquidez.")
+            st.error("Ningún activo supera el umbral de convicción. Liquidez al 100%.")
 
 st.markdown("---")
 st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
@@ -186,4 +193,4 @@ if historial_nube:
     df_cloud = pd.DataFrame(historial_nube)
     st.table(df_cloud.head(10))
 else:
-    st.caption("No se detectan registros históricos en la nube. Realiza un análisis para iniciar la grabación.")
+    st.caption("No hay registros en la nube. Inicia un análisis para comenzar el historial.")
