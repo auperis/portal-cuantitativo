@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 12.1: REFUERZO DE IDENTIDAD (FIX PROJECT ID)
-# Objetivo: Garantizar la conexión con Firestore incluso si el entorno es ruidoso.
+# ARQUITECTURA FASE 11.2: PROTOCOLO DE TRANSPARENCIA TOTAL (V9)
+# Objetivo: Forzar la identidad del Project ID y auditar la visibilidad del entorno.
 # ==============================================================================
 
 import streamlit as st
@@ -15,54 +15,78 @@ from datetime import datetime, timedelta
 import json
 import os
 
-# --- CONEXIÓN SATELITAL (DIRECTA A GOOGLE CLOUD) ---
+# --- CONEXIÓN SATELITAL (PROTOCOLO ROBUSTO) ---
 from google.cloud import firestore as google_firestore
 from firebase_admin import initialize_app, _apps
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (SISTEMA DE TRIPLE BÚSQUEDA)
+# 1. INICIALIZACIÓN DE LA NUBE (DETECCIÓN MULTI-CAPA)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📊")
 
-# Intentamos detectar el ID automáticamente
+# 1.1. Buscador de Identidad (Exploración de variables de entorno)
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_raw = os.environ.get('__firebase_config')
 
-detected_project_id = None
+detected_id = None
+
+# Intento 1: Parseo de la variable de configuración estándar
 if firebase_config_raw:
     try:
         config_dict = json.loads(firebase_config_raw)
-        detected_project_id = config_dict.get('projectId')
+        detected_id = config_dict.get('projectId')
     except:
         pass
 
-# BARRA LATERAL: Permitimos la entrada manual si falla la detección automática
+# Intento 2: Búsqueda en secretos de Streamlit
+if not detected_id:
+    try:
+        detected_id = st.secrets.get("general", {}).get("project_id")
+    except:
+        pass
+
+# ------------------------------------------------------------------------------
+# 2. BARRA LATERAL: ESTADO DE LA RED Y DEBUG
+# ------------------------------------------------------------------------------
 st.sidebar.header("📡 Estado de la Red")
-project_id = st.sidebar.text_input(
-    "Project ID (Identificador Satelital)", 
-    value=detected_project_id if detected_project_id else "",
-    help="Si no se detecta automáticamente, cópialo de la configuración de tu base de datos."
+
+# Si el sistema sigue fallando, permitimos al Arquitecto forzar el ID manualmente
+project_id_manual = st.sidebar.text_input(
+    "Forzar Project ID (Manual)", 
+    value=detected_id if detected_id else "",
+    help="Si el radar dice 'No detectado', busca el ID en tu consola Firebase y pégalo aquí."
 )
 
 db = None
-if project_id:
+if project_id_manual:
     try:
-        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-        db = google_firestore.Client(project=project_id)
+        # Forzamos la variable de entorno global para todas las librerías de Google
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id_manual
+        
+        # Inicializamos el cliente principal
+        db = google_firestore.Client(project=project_id_manual)
+        
+        # Inicializamos Firebase Admin como respaldo
         if not _apps:
-            initialize_app(options={'projectId': project_id})
-        st.sidebar.success(f"📡 Satélite Sintonizado: {project_id}")
+            initialize_app(options={'projectId': project_id_manual})
+            
+        st.sidebar.success(f"✅ Satélite Sintonizado: {project_id_manual}")
     except Exception as e:
         st.sidebar.error(f"⚠️ Error de Conexión: {e}")
 else:
     st.sidebar.error("❌ Error: No se detectó ID de Proyecto.")
-    st.sidebar.info("💡 Introduce el ID manualmente arriba para activar la nube.")
+    st.sidebar.info("💡 Instrucción: Si el cuadro de arriba está vacío, escribe manualmente el ID de tu proyecto Firebase.")
+
+# DEBUG: Solo para el Arquitecto (Ayuda a entender qué ve la IA)
+with st.sidebar.expander("🔍 Debug de Identidad"):
+    st.write(f"Config Detectada: {'SÍ' if firebase_config_raw else 'NO'}")
+    st.write(f"App ID: {app_id}")
 
 # ------------------------------------------------------------------------------
-# 2. PANEL DE CONTROL
+# 3. PANEL DE CONTROL DE INVERSIÓN
 # ------------------------------------------------------------------------------
 st.sidebar.header("📈 Configuración del Radar")
-tickers_input = st.sidebar.text_input("Activos (separados por coma)", value="SPY, GLD, QQQ, TLT, BTC-USD")
+tickers_input = st.sidebar.text_input("Activos (ej: SPY, BTC-USD, AAPL)", value="SPY, GLD, QQQ, TLT, BTC-USD")
 
 st.sidebar.header("🛡️ Gestión de Riesgo")
 capital_usuario = st.sidebar.number_input("Capital Total (€)", min_value=100, value=1000)
@@ -72,7 +96,7 @@ umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", 50, 80, 58
 boton_analizar = st.sidebar.button("Activar Radar y Auditar Nube")
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR LÓGICO E INDICADORES
+# 4. MOTOR LÓGICO IA
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     return yf.Ticker(ticker).history(period="3y")
@@ -127,100 +151,84 @@ def realizar_auditoria_nube():
     try:
         docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(20).stream()
         registros = [doc.to_dict() for doc in docs]
-        
         if not registros: return []
-
         auditados = []
         for reg in registros:
             ticker = reg['Activo']
-            info_mercado = yf.Ticker(ticker).history(period="2d")
-            if len(info_mercado) >= 2:
-                precio_prediccion = reg['Precio ($)']
-                precio_real_hoy = info_mercado['Close'].iloc[-1]
-                
-                subio_realmente = 1 if precio_real_hoy > precio_prediccion else 0
-                conviccion_alta = 1 if reg['Convicción (%)'] >= 50 else 0
-                
-                reg['Resultado'] = "✅ ACIERTO" if subio_realmente == conviccion_alta else "❌ ERROR"
-                reg['Variación Real (%)'] = round(((precio_real_hoy / precio_prediccion) - 1) * 100, 2)
+            info = yf.Ticker(ticker).history(period="2d")
+            if len(info) >= 2:
+                precio_pred = reg['Precio ($)']
+                precio_hoy = info['Close'].iloc[-1]
+                subio = 1 if precio_hoy > precio_pred else 0
+                conv_alta = 1 if reg['Convicción (%)'] >= 50 else 0
+                reg['Resultado'] = "✅ ACIERTO" if subio == conv_alta else "❌ ERROR"
+                reg['Var %'] = round(((precio_hoy / precio_pred) - 1) * 100, 2)
                 auditados.append(reg)
         return auditados
-    except:
-        return []
+    except: return []
 
 # ------------------------------------------------------------------------------
-# 4. EJECUCIÓN WEB
+# 5. INTERFAZ WEB (TABS)
 # ------------------------------------------------------------------------------
 st.title("🤖 Portal de Inteligencia Cuantitativa")
 
-tab1, tab2 = st.tabs(["🎯 Radar de Hoy", "📊 Auditoría de la IA"])
+t1, t2 = st.tabs(["🎯 Radar de Hoy", "📊 Auditoría de Aciertos"])
 
-with tab1:
+with t1:
     if boton_analizar:
-        lista_activos = [x.strip().upper() for x in tickers_input.split(',')]
-        resultados_hoy = []
-        
-        progreso = st.progress(0)
-        for i, ticker in enumerate(lista_activos):
+        activos = [x.strip().upper() for x in tickers_input.split(',')]
+        resultados = []
+        prog = st.progress(0)
+        for i, tick in enumerate(activos):
             try:
-                df_raw = obtener_datos(ticker)
+                df_raw = obtener_datos(tick)
                 if not df_raw.empty:
                     df = calcular_indicadores(df_raw)
                     mod, prec, pists = entrenar_modelo(df)
                     hoy = df.iloc[-1:]
                     prob = mod.predict_proba(hoy[pists])[0][1] * 100
-                    precio = hoy['Close'].values[0]
-                    
-                    resultados_hoy.append({
+                    resultados.append({
                         "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                        "Activo": ticker,
+                        "Activo": tick,
                         "Convicción (%)": round(prob, 2),
-                        "Precio ($)": round(precio, 2),
+                        "Precio ($)": round(hoy['Close'].values[0], 2),
                         "Precisión (%)": round(prec, 2)
                     })
             except: pass
-            progreso.progress((i + 1) / len(lista_activos))
+            prog.progress((i + 1) / len(activos))
 
-        if resultados_hoy:
-            if db: guardar_en_nube(resultados_hoy)
-            df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
-            
+        if resultados:
+            if db: guardar_en_nube(resultados)
+            df_res = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
             st.subheader("🏆 Ranking Institucional")
-            st.dataframe(df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
+            # Restauración del color verde solicitado
+            st.dataframe(df_res.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
             
-            ganador = df_rank.iloc[0]
+            ganador = df_res.iloc[0]
             if ganador["Convicción (%)"] >= umbral_conviccion:
                 st.success(f"👑 ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
-                acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
-                
+                acc, inv, ries = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
                 c2.metric("Inversión", f"{inv:.2f} €")
-                c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
+                c3.metric("Riesgo Máximo", f"{ries:.2f} €")
                 st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
-                st.toast("✅ Datos guardados en la nube.")
             else:
                 st.error("Ningún activo superó el filtro. Liquidez al 100%.")
 
-with tab2:
+with t2:
     st.subheader("🌐 Marcador del Estadio (Realidad vs IA)")
-    st.markdown("Comparativa de las últimas predicciones guardadas contra el precio actual del mercado.")
-    
     if db:
-        datos_auditados = realizar_auditoria_nube()
-        if datos_auditados:
-            df_auditoria = pd.DataFrame(datos_auditados)
-            total = len(df_auditoria)
-            aciertos = len(df_auditoria[df_auditoria['Resultado'] == "✅ ACIERTO"])
-            hit_rate = (aciertos / total) * 100
-            
-            col_aud1, col_aud2 = st.columns(2)
-            col_aud1.metric("Hit Rate Real (Caja Negra)", f"{hit_rate:.2f}%", 
-                           delta="Acierto vs Mercado", delta_color="normal" if hit_rate > 50 else "inverse")
-            col_aud2.metric("Muestras Auditadas", total)
-            
-            st.table(df_auditoria[['Fecha', 'Activo', 'Convicción (%)', 'Variación Real (%)', 'Resultado']])
+        auditoria = realizar_auditoria_nube()
+        if auditoria:
+            df_aud = pd.DataFrame(auditoria)
+            aciertos = len(df_aud[df_aud['Resultado'] == "✅ ACIERTO"])
+            rate = (aciertos / len(df_aud)) * 100
+            ca1, ca2 = st.columns(2)
+            ca1.metric("Hit Rate Real", f"{rate:.2f}%", delta="vs Mercado")
+            ca2.metric("Muestras", len(df_aud))
+            st.table(df_aud[['Fecha', 'Activo', 'Convicción (%)', 'Var %', 'Resultado']])
         else:
-            st.info("No hay datos suficientes para auditar. Ejecuta el radar para generar registros.")
+            st.info("Analiza activos para empezar a generar el historial de aciertos.")
     else:
-        st.warning("⚠️ Conecta la base de datos (Project ID) para habilitar la auditoría.")
+        st.warning("⚠️ Conecta el satélite (Project ID) para habilitar la auditoría.")
