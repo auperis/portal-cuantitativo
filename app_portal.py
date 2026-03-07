@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 29: RÉGIMEN MACRO Y EXPANSIÓN TEMPORAL
-# Objetivo: Ampliar el horizonte de simulación para dejar correr ganancias y 
-# añadir un filtro de Régimen Macro (SMA 200) para evitar inviernos financieros.
+# ARQUITECTURA FASE 30: ALINEACIÓN DE HORIZONTE (SWING ORACLE)
+# Objetivo: Alinear el objetivo de la IA (Target) con nuestro estilo de
+# inversión. Enseñar a la IA a predecir a N días vista, no a 1 día.
 # ==============================================================================
 
 import streamlit as st
@@ -16,7 +16,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Régimen Macro", layout="wide", page_icon="🔭")
+st.set_page_config(page_title="Portal IA - Oráculo Swing", layout="wide", page_icon="🔮")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -32,21 +32,20 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("⏱️ Horizonte Temporal")
-# NUEVO: Expansión del tiempo de simulación
-dias_simulacion = st.sidebar.selectbox("Días de Simulación (Backtest)", [30, 90, 180, 365], index=1,
-                                       help="90 o 180 días permite ver cómo maduran las operaciones institucionales.")
-
-st.sidebar.divider()
-st.sidebar.header("🔭 Filtros de Precisión")
+st.sidebar.header("🔮 El Cerebro (IA)")
+# NUEVO DIAL: ¿A cuántos días vista queremos que mire la IA?
+dias_vision_ia = st.sidebar.slider("Horizonte de Predicción IA (Días)", 1, 15, 5, 
+                                   help="5 días = 1 semana de mercado. Obliga a la IA a buscar tendencias, no saltos de 1 día.")
 umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
-multiplicador_atr = st.sidebar.slider("Multiplicador ATR (Paracaídas)", 1.0, 5.0, 2.0)
-
-# NUEVO: Filtro de Régimen Macro
-filtro_macro = st.sidebar.checkbox("Activar Lente Macro (Media 200)", value=True,
-                                   help="Prohíbe comprar si el activo está en tendencia bajista de largo plazo.")
 
 st.sidebar.divider()
+st.sidebar.header("⏱️ El Escudo y Tiempo")
+dias_simulacion = st.sidebar.selectbox("Días de Simulación (Backtest)", [30, 90, 180, 365], index=2)
+multiplicador_atr = st.sidebar.slider("Multiplicador ATR (Paracaídas)", 1.0, 5.0, 2.0)
+filtro_macro = st.sidebar.checkbox("Activar Lente Macro (Media 200)", value=True)
+
+st.sidebar.divider()
+st.sidebar.header("💸 Capital")
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
@@ -58,10 +57,7 @@ def calcular_indicadores(df):
     d = df.copy()
     d['Retorno'] = d['Close'].pct_change() * 100
     d['Media_50'] = d['Close'].rolling(50).mean()
-    
-    # NUEVO: La línea que separa el Verano del Invierno Financiero
     d['Media_200'] = d['Close'].rolling(200).mean() 
-    
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
     
     delta = d['Close'].diff()
@@ -78,21 +74,34 @@ def calcular_indicadores(df):
     
     return d.dropna()
 
-def entrenar_ia(df_hist):
+def entrenar_ia(df_hist, dias_vision):
     df = df_hist.copy()
-    df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
+    
+    # FASE 30: LA CLAVE DEL ÉXITO. 
+    # Ya no miramos a 1 día (-1), miramos a X días vista (-dias_vision).
+    # Además, exigimos que el precio no solo sea mayor, sino que suba al menos un 1% para evitar ruido.
+    df['Target'] = np.where(df['Close'].shift(-dias_vision) > df['Close'] * 1.01, 1, 0)
+    
+    # Eliminamos las últimas filas porque de esas "aún no conocemos el futuro" a X días vista
     df = df.dropna()
+    
     pistas = ['Retorno', 'Volatilidad', 'RSI']
+    
+    # Si no hay suficientes datos para entrenar (porque dropeamos demasiados), devolvemos probabilidad neutral
+    if len(df) < 50:
+        return 50.0 
+        
     model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
     model.fit(df[pistas], df['Target'])
-    prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
+    
+    # Predecimos basándonos en las pistas del último día disponible
+    prob = model.predict_proba(df_hist[pistas].iloc[-1:]) [0][1] * 100
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR FASE 29 (MACRO + ATR)
+# 4. SIMULADOR FASE 30
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_fase29(ticker, dias):
-    # Descargamos más tiempo (3y) para asegurarnos de que la Media 200 tiene datos
+def ejecutar_simulacion_fase30(ticker, dias, dias_vision):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
     
     liquidez = capital_total
@@ -104,7 +113,6 @@ def ejecutar_simulacion_fase29(ticker, dias):
     ops = 0
     umbral_final = umbral_base + st.session_state['auto_bias']
     
-    # Recorremos el número de días seleccionado en el UI
     for i in range(len(df) - dias, len(df)):
         hoy = df.iloc[i]
         
@@ -122,14 +130,15 @@ def ejecutar_simulacion_fase29(ticker, dias):
                 precio_maximo_alcanzado = 0
                 
         # 2. BUSCAR ENTRADA
-        if not en_posicion and i < len(df) - 1:
+        if not en_posicion and i < len(df) - dias_vision:
             estudio = df.iloc[:i]
-            prob = entrenar_ia(estudio)
+            # Le pasamos a la IA cuántos días debe mirar al futuro durante su entrenamiento
+            prob = entrenar_ia(estudio, dias_vision)
             
-            # EL LENTE MACRO: Solo operamos si estamos en Verano (Precio > Media 200)
             pasa_macro = (hoy['Close'] > hoy['Media_200']) if filtro_macro else True
             
-            if prob >= umbral_final and hoy['Volatilidad'] > 0.5 and pasa_macro:
+            # También exigimos que el RSI no esté en sobrecompra extrema (>70) para evitar picos trampa
+            if prob >= umbral_final and hoy['Volatilidad'] > 0.5 and pasa_macro and hoy['RSI'] < 70:
                 ops += 1
                 en_posicion = True
                 precio_maximo_alcanzado = hoy['Close']
@@ -152,7 +161,7 @@ def ejecutar_simulacion_fase29(ticker, dias):
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🔭 Portal IA: Lente Macro y Expansión")
+st.title("🔮 Portal IA: El Oráculo Swing")
 
 c1, c2, c3 = st.columns(3)
 umbral_f = umbral_base + st.session_state['auto_bias']
@@ -160,7 +169,7 @@ umbral_f = umbral_base + st.session_state['auto_bias']
 with c1:
     st.metric("Umbral de Decisión IA", f"{umbral_f:.1f}%")
 with c2:
-    st.metric("Horizonte de Análisis", f"{dias_simulacion} Días")
+    st.metric("Visión de la IA", f"{dias_vision_ia} Días al futuro")
 with c3:
     if st.button("♻️ Reiniciar Memoria IA"):
         st.session_state['auto_bias'] = 0.0
@@ -169,21 +178,23 @@ with c3:
 st.divider()
 
 if st.button(f"🏁 Iniciar Simulación ({dias_simulacion} Días)"):
-    with st.spinner("Analizando regímenes de mercado y extendiendo el horizonte..."):
-        curva, n_ops, u_final = ejecutar_simulacion_fase29("QQQ", dias_simulacion)
+    with st.spinner(f"Entrenando a la IA para predecir a {dias_vision_ia} días vista..."):
+        curva, n_ops, u_final = ejecutar_simulacion_fase30("QQQ", dias_simulacion, dias_vision_ia)
         st.line_chart(curva)
         
         beneficio = curva[-1] - capital_total
         
-        # AUTO-CORRECCIÓN MACRO
-        if beneficio < 0 and n_ops > 3:
+        # AUTO-CORRECCIÓN
+        if beneficio < 0 and n_ops > 2:
             st.session_state['auto_bias'] += 0.5
-            st.error("Rendimiento negativo detectado. Aumentando la severidad de los filtros.")
+            st.warning("Ajustando sesgo para filtrar falsas tendencias.")
         elif beneficio > 0:
             st.session_state['auto_bias'] = max(-5.0, st.session_state['auto_bias'] - 0.5)
-            st.success("¡Tendencia capturada con éxito! El sistema es rentable en este horizonte.")
+            st.success("¡Excelente! La alineación temporal ha capturado la verdadera tendencia.")
 
         c_a, c_b, c_c = st.columns(3)
-        c_a.metric("Operaciones Completadas", n_ops)
-        c_b.metric("Beneficio Neto Total", f"{beneficio:.2f} €", delta="Optimizado")
+        c_a.metric("Operaciones", n_ops)
+        c_b.metric("Beneficio Neto Total", f"{beneficio:.2f} €", delta="Alineación Temporal Activa")
         c_c.metric("Capital Final", f"{curva[-1]:.2f} €")
+        
+        st.markdown(f"**Análisis de Flujo:** La IA ahora estudia qué pasaba en el mercado exactamente {dias_vision_ia} días antes de que el QQQ subiera más de un 1%. Ya no persigue saltos de 24 horas.")
