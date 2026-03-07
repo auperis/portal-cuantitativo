@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 12: AUDITORÍA DE ACIERTOS (EL MARCADOR)
-# Objetivo: Comparar predicciones pasadas con la realidad del mercado.
+# ARQUITECTURA FASE 12.1: REFUERZO DE IDENTIDAD (FIX PROJECT ID)
+# Objetivo: Garantizar la conexión con Firestore incluso si el entorno es ruidoso.
 # ==============================================================================
 
 import streamlit as st
@@ -20,38 +20,48 @@ from google.cloud import firestore as google_firestore
 from firebase_admin import initialize_app, _apps
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE
+# 1. INICIALIZACIÓN DE LA NUBE (SISTEMA DE TRIPLE BÚSQUEDA)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📊")
 
+# Intentamos detectar el ID automáticamente
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_raw = os.environ.get('__firebase_config')
 
-project_id = None
+detected_project_id = None
 if firebase_config_raw:
     try:
         config_dict = json.loads(firebase_config_raw)
-        project_id = config_dict.get('projectId')
+        detected_project_id = config_dict.get('projectId')
     except:
         pass
 
+# BARRA LATERAL: Permitimos la entrada manual si falla la detección automática
+st.sidebar.header("📡 Estado de la Red")
+project_id = st.sidebar.text_input(
+    "Project ID (Identificador Satelital)", 
+    value=detected_project_id if detected_project_id else "",
+    help="Si no se detecta automáticamente, cópialo de la configuración de tu base de datos."
+)
+
 db = None
-try:
-    if project_id:
+if project_id:
+    try:
         os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
         db = google_firestore.Client(project=project_id)
         if not _apps:
             initialize_app(options={'projectId': project_id})
-        st.sidebar.success(f"📡 Satélite Conectado: {project_id}")
-    else:
-        st.sidebar.error("❌ Error: No se detectó ID de Proyecto.")
-except Exception as e:
-    st.sidebar.error(f"⚠️ Error de Conexión: {e}")
+        st.sidebar.success(f"📡 Satélite Sintonizado: {project_id}")
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Error de Conexión: {e}")
+else:
+    st.sidebar.error("❌ Error: No se detectó ID de Proyecto.")
+    st.sidebar.info("💡 Introduce el ID manualmente arriba para activar la nube.")
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL
 # ------------------------------------------------------------------------------
-st.sidebar.header("📡 Configuración del Radar")
+st.sidebar.header("📈 Configuración del Radar")
 tickers_input = st.sidebar.text_input("Activos (separados por coma)", value="SPY, GLD, QQQ, TLT, BTC-USD")
 
 st.sidebar.header("🛡️ Gestión de Riesgo")
@@ -108,11 +118,11 @@ def guardar_en_nube(data_list):
     if db is None: return
     for item in data_list:
         try:
+            # Ruta obligatoria: artifacts/{appId}/public/data/{collection}
             db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').document().set(item)
         except: pass
 
 def realizar_auditoria_nube():
-    """Descarga predicciones y comprueba si acertaron usando precios actuales."""
     if db is None: return []
     try:
         docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(20).stream()
@@ -120,26 +130,22 @@ def realizar_auditoria_nube():
         
         if not registros: return []
 
-        # Creamos una lista para los resultados auditados
         auditados = []
         for reg in registros:
             ticker = reg['Activo']
-            # Obtenemos precio actual para ver si subió desde la predicción
             info_mercado = yf.Ticker(ticker).history(period="2d")
             if len(info_mercado) >= 2:
                 precio_prediccion = reg['Precio ($)']
                 precio_real_hoy = info_mercado['Close'].iloc[-1]
                 
-                # ¿Acertó la IA? (Solo si la convicción era alta)
                 subio_realmente = 1 if precio_real_hoy > precio_prediccion else 0
-                conviccion_alta = 1 if reg['Convicción (%)'] >= 50 else 0 # 50 como base de dirección
+                conviccion_alta = 1 if reg['Convicción (%)'] >= 50 else 0
                 
                 reg['Resultado'] = "✅ ACIERTO" if subio_realmente == conviccion_alta else "❌ ERROR"
                 reg['Variación Real (%)'] = round(((precio_real_hoy / precio_prediccion) - 1) * 100, 2)
                 auditados.append(reg)
         return auditados
-    except Exception as e:
-        st.sidebar.error(f"Error en auditoría: {e}")
+    except:
         return []
 
 # ------------------------------------------------------------------------------
@@ -192,6 +198,7 @@ with tab1:
                 c2.metric("Inversión", f"{inv:.2f} €")
                 c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
                 st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
+                st.toast("✅ Datos guardados en la nube.")
             else:
                 st.error("Ningún activo superó el filtro. Liquidez al 100%.")
 
@@ -199,21 +206,21 @@ with tab2:
     st.subheader("🌐 Marcador del Estadio (Realidad vs IA)")
     st.markdown("Comparativa de las últimas predicciones guardadas contra el precio actual del mercado.")
     
-    datos_auditados = realizar_auditoria_nube()
-    
-    if datos_auditados:
-        df_auditoria = pd.DataFrame(datos_auditados)
-        
-        # Cálculo del HIT RATE (Porcentaje de acierto real)
-        total = len(df_auditoria)
-        aciertos = len(df_auditoria[df_auditoria['Resultado'] == "✅ ACIERTO"])
-        hit_rate = (aciertos / total) * 100
-        
-        col_aud1, col_aud2 = st.columns(2)
-        col_aud1.metric("Hit Rate Real (Caja Negra)", f"{hit_rate:.2f}%", 
-                       delta="Acierto vs Mercado", delta_color="normal" if hit_rate > 50 else "inverse")
-        col_aud2.metric("Muestras Auditadas", total)
-        
-        st.table(df_auditoria[['Fecha', 'Activo', 'Convicción (%)', 'Variación Real (%)', 'Resultado']])
+    if db:
+        datos_auditados = realizar_auditoria_nube()
+        if datos_auditados:
+            df_auditoria = pd.DataFrame(datos_auditados)
+            total = len(df_auditoria)
+            aciertos = len(df_auditoria[df_auditoria['Resultado'] == "✅ ACIERTO"])
+            hit_rate = (aciertos / total) * 100
+            
+            col_aud1, col_aud2 = st.columns(2)
+            col_aud1.metric("Hit Rate Real (Caja Negra)", f"{hit_rate:.2f}%", 
+                           delta="Acierto vs Mercado", delta_color="normal" if hit_rate > 50 else "inverse")
+            col_aud2.metric("Muestras Auditadas", total)
+            
+            st.table(df_auditoria[['Fecha', 'Activo', 'Convicción (%)', 'Variación Real (%)', 'Resultado']])
+        else:
+            st.info("No hay datos suficientes para auditar. Ejecuta el radar para generar registros.")
     else:
-        st.info("No hay datos suficientes para auditar. Realiza análisis durante varios días para ver resultados.")
+        st.warning("⚠️ Conecta la base de datos (Project ID) para habilitar la auditoría.")
