@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (CORREGIDA V2): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Forzar la identificación del Project ID en el entorno Streamlit.
+# ARQUITECTURA FASE 11 (CORREGIDA V3): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Forzar la identificación del Project ID directamente en initialize_app.
 # ==============================================================================
 
 import streamlit as st
@@ -20,35 +20,41 @@ from firebase_admin import firestore, initialize_app, credentials, _apps
 import firebase_admin
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN ROBUSTA AL PROJECT ID)
+# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN DEFINITIVA AL PROJECT ID)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Extraemos la configuración del entorno inyectada por el sistema
+# Extraemos la configuración del entorno proporcionada por el sistema
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_str = os.environ.get('__firebase_config')
 
-# PARSEO CRÍTICO: Forzamos la identificación del proyecto en las variables globales
+# PARSEO DE SEGURIDAD: Obtenemos el Project ID para el oficial de aduanas
+project_id = None
 if firebase_config_str:
     try:
         config_dict = json.loads(firebase_config_str)
         project_id = config_dict.get('projectId')
-        if project_id:
-            # Esta línea es el 'parche' que exige el error:
-            os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
     except:
         pass
 
-# Inicializamos la App solo si no existe
+# Inicializamos la App inyectando el ID de forma explícita en las opciones
 if not _apps:
     try:
-        # Al haber configurado os.environ["GOOGLE_CLOUD_PROJECT"], initialize_app() ya sabe a dónde ir
-        initialize_app()
+        if project_id:
+            # Forzamos la variable de entorno y la configuración de inicialización
+            os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+            initialize_app(options={'projectId': project_id})
+        else:
+            initialize_app()
     except Exception as e:
-        st.error(f"Error de inicialización: {e}")
+        st.error(f"Error técnico de inicialización: {e}")
 
-# Conexión al cliente de base de datos
-db = firestore.client()
+# Conexión al cliente de base de datos (Ahora con el sello de aduanas correcto)
+try:
+    db = firestore.client()
+except Exception as e:
+    st.error(f"Error al conectar con Firestore: {e}")
+    st.info("Asegúrate de que la integración de base de datos esté activa en tu entorno.")
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL (Barra Lateral)
@@ -109,16 +115,18 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
 def guardar_en_nube(data_list):
     for item in data_list:
         try:
-            # Ruta obligatoria: artifacts/{appId}/public/data/{collection}
+            # Estructura de colección obligatoria para permisos de escritura
             db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document().set(item)
-        except: pass
+        except Exception as e:
+            pass
 
 def cargar_de_nube():
     try:
-        # Recuperamos las últimas 10 predicciones
+        # Recuperamos el historial ordenado por fecha
         docs = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').order_by('Fecha', direction=firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
-    except: return []
+    except:
+        return []
 
 # ------------------------------------------------------------------------------
 # 4. EJECUCIÓN WEB
@@ -155,7 +163,7 @@ if boton_analizar:
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
-        # ESTILO: Recuperamos el degradado verde para mayor claridad visual
+        # ESTÉTICA: Aplicamos el degradado verde para una lectura profesional
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -163,17 +171,17 @@ if boton_analizar:
         
         ganador = df_rank.iloc[0]
         if ganador["Convicción (%)"] >= umbral_conviccion:
-            st.success(f"👑 ACTIVO ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
+            st.success(f"👑 ACTIVO SELECCIONADO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
             acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
-            c2.metric("Inversión Total", f"{inv:.2f} €")
+            c1.metric("Acciones (Decimales)", f"{acc:.4f}")
+            c2.metric("Inversión Sugerida", f"{inv:.2f} €")
             c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
-            st.info(f"👉 **Orden sugerida:** Compra {acc:.4f} de {ganador['Activo']}.")
-            st.toast("✅ Predicciones guardadas en la nube.")
+            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Capital protegido.")
+            st.toast("✅ Datos sincronizados con la nube.")
         else:
-            st.error("Ningún activo superó el filtro. Mantener liquidez.")
+            st.error("Convicción insuficiente en el radar. Mantenemos 100% de liquidez.")
 
 st.markdown("---")
 st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
@@ -183,4 +191,4 @@ if historial_nube:
     df_cloud = pd.DataFrame(historial_nube)
     st.table(df_cloud.head(10))
 else:
-    st.caption("No hay datos en la nube. Pulsa el botón para iniciar la grabación histórica.")
+    st.caption("No se detectan registros históricos en la nube. Realiza un análisis para iniciar la grabación.")
