@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (CORREGIDA): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Solucionar ValueError de Firestore y restaurar visualización verde.
+# ARQUITECTURA FASE 11 (CORREGIDA V2): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Forzar la identificación del Project ID en el entorno Streamlit.
 # ==============================================================================
 
 import streamlit as st
@@ -20,28 +20,34 @@ from firebase_admin import firestore, initialize_app, credentials, _apps
 import firebase_admin
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN AL PROJECT ID)
+# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN ROBUSTA AL PROJECT ID)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Extraemos el ID del proyecto directamente de la configuración del entorno
+# Extraemos la configuración del entorno inyectada por el sistema
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_str = os.environ.get('__firebase_config')
 
-if not _apps:
+# PARSEO CRÍTICO: Forzamos la identificación del proyecto en las variables globales
+if firebase_config_str:
     try:
-        if firebase_config_str:
-            # Si el entorno nos da la configuración, extraemos el projectId
-            config_dict = json.loads(firebase_config_str)
-            project_id = config_dict.get('projectId')
-            initialize_app(options={'projectId': project_id})
-        else:
-            # Fallback para desarrollo local
-            initialize_app()
-    except Exception as e:
-        # Si ya está inicializada o falla, intentamos continuar
+        config_dict = json.loads(firebase_config_str)
+        project_id = config_dict.get('projectId')
+        if project_id:
+            # Esta línea es el 'parche' que exige el error:
+            os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+    except:
         pass
 
+# Inicializamos la App solo si no existe
+if not _apps:
+    try:
+        # Al haber configurado os.environ["GOOGLE_CLOUD_PROJECT"], initialize_app() ya sabe a dónde ir
+        initialize_app()
+    except Exception as e:
+        st.error(f"Error de inicialización: {e}")
+
+# Conexión al cliente de base de datos
 db = firestore.client()
 
 # ------------------------------------------------------------------------------
@@ -103,12 +109,13 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
 def guardar_en_nube(data_list):
     for item in data_list:
         try:
-            # Siguiendo estrictamente la ruta de la Fase 11
+            # Ruta obligatoria: artifacts/{appId}/public/data/{collection}
             db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document().set(item)
         except: pass
 
 def cargar_de_nube():
     try:
+        # Recuperamos las últimas 10 predicciones
         docs = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').order_by('Fecha', direction=firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
     except: return []
@@ -148,7 +155,7 @@ if boton_analizar:
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
-        # RESTAURADO: El degradado verde que facilita la lectura
+        # ESTILO: Recuperamos el degradado verde para mayor claridad visual
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
