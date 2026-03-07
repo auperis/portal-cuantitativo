@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 30: ALINEACIÓN DE HORIZONTE (SWING ORACLE)
-# Objetivo: Alinear el objetivo de la IA (Target) con nuestro estilo de
-# inversión. Enseñar a la IA a predecir a N días vista, no a 1 día.
+# ARQUITECTURA FASE 31: CALIBRACIÓN DE PROBABILIDADES (PROBABILITY CALIBRATION)
+# Objetivo: Medir la confianza real de la IA en predicciones a largo plazo
+# para ajustar el umbral de entrada de forma realista.
 # ==============================================================================
 
 import streamlit as st
@@ -16,7 +16,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Oráculo Swing", layout="wide", page_icon="🔮")
+st.set_page_config(page_title="Portal IA - Calibración", layout="wide", page_icon="🎛️")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -32,20 +32,21 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("🔮 El Cerebro (IA)")
-# NUEVO DIAL: ¿A cuántos días vista queremos que mire la IA?
-dias_vision_ia = st.sidebar.slider("Horizonte de Predicción IA (Días)", 1, 15, 5, 
-                                   help="5 días = 1 semana de mercado. Obliga a la IA a buscar tendencias, no saltos de 1 día.")
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
+st.sidebar.header("🎛️ Calibración de la IA")
+dias_vision_ia = st.sidebar.slider("Horizonte de Predicción IA (Días)", 1, 15, 5)
+
+# ATENCIÓN: Hemos bajado el rango del slider para permitir umbrales más realistas (desde 50%)
+# Para predecir a 5 días, un 53% puede ser una ventaja estadística masiva.
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 70.0, 52.0, 
+                                help="Para Swing Trading, un 52-54% es a menudo el 'Punto Dulce'.")
 
 st.sidebar.divider()
 st.sidebar.header("⏱️ El Escudo y Tiempo")
-dias_simulacion = st.sidebar.selectbox("Días de Simulación (Backtest)", [30, 90, 180, 365], index=2)
-multiplicador_atr = st.sidebar.slider("Multiplicador ATR (Paracaídas)", 1.0, 5.0, 2.0)
+dias_simulacion = st.sidebar.selectbox("Días de Simulación", [30, 90, 180, 365], index=2)
+multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 2.0)
 filtro_macro = st.sidebar.checkbox("Activar Lente Macro (Media 200)", value=True)
 
 st.sidebar.divider()
-st.sidebar.header("💸 Capital")
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
@@ -76,32 +77,24 @@ def calcular_indicadores(df):
 
 def entrenar_ia(df_hist, dias_vision):
     df = df_hist.copy()
-    
-    # FASE 30: LA CLAVE DEL ÉXITO. 
-    # Ya no miramos a 1 día (-1), miramos a X días vista (-dias_vision).
-    # Además, exigimos que el precio no solo sea mayor, sino que suba al menos un 1% para evitar ruido.
     df['Target'] = np.where(df['Close'].shift(-dias_vision) > df['Close'] * 1.01, 1, 0)
-    
-    # Eliminamos las últimas filas porque de esas "aún no conocemos el futuro" a X días vista
     df = df.dropna()
-    
     pistas = ['Retorno', 'Volatilidad', 'RSI']
     
-    # Si no hay suficientes datos para entrenar (porque dropeamos demasiados), devolvemos probabilidad neutral
     if len(df) < 50:
         return 50.0 
         
-    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    # Aumentamos ligeramente la profundidad del bosque para encontrar patrones más complejos a largo plazo
+    model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42)
     model.fit(df[pistas], df['Target'])
     
-    # Predecimos basándonos en las pistas del último día disponible
     prob = model.predict_proba(df_hist[pistas].iloc[-1:]) [0][1] * 100
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR FASE 30
+# 4. SIMULADOR FASE 31 (CON ESCÁNER DE CONVICCIÓN)
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_fase30(ticker, dias, dias_vision):
+def ejecutar_simulacion_calibracion(ticker, dias, dias_vision):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
     
     liquidez = capital_total
@@ -112,6 +105,9 @@ def ejecutar_simulacion_fase30(ticker, dias, dias_vision):
     curva_capital = []
     ops = 0
     umbral_final = umbral_base + st.session_state['auto_bias']
+    
+    # NUEVO: Rastreador de Convicción
+    pico_maximo_probabilidad = 0.0
     
     for i in range(len(df) - dias, len(df)):
         hoy = df.iloc[i]
@@ -132,12 +128,14 @@ def ejecutar_simulacion_fase30(ticker, dias, dias_vision):
         # 2. BUSCAR ENTRADA
         if not en_posicion and i < len(df) - dias_vision:
             estudio = df.iloc[:i]
-            # Le pasamos a la IA cuántos días debe mirar al futuro durante su entrenamiento
             prob = entrenar_ia(estudio, dias_vision)
+            
+            # Registramos el pico máximo alcanzado por la IA
+            if prob > pico_maximo_probabilidad:
+                pico_maximo_probabilidad = prob
             
             pasa_macro = (hoy['Close'] > hoy['Media_200']) if filtro_macro else True
             
-            # También exigimos que el RSI no esté en sobrecompra extrema (>70) para evitar picos trampa
             if prob >= umbral_final and hoy['Volatilidad'] > 0.5 and pasa_macro and hoy['RSI'] < 70:
                 ops += 1
                 en_posicion = True
@@ -156,18 +154,18 @@ def ejecutar_simulacion_fase30(ticker, dias, dias_vision):
         valor_cartera_hoy = liquidez + (acciones_compradas * hoy['Close']) if en_posicion else liquidez
         curva_capital.append(valor_cartera_hoy)
         
-    return curva_capital, ops, umbral_final
+    return curva_capital, ops, umbral_final, pico_maximo_probabilidad
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🔮 Portal IA: El Oráculo Swing")
+st.title("🎛️ Portal IA: Calibración de Convicción")
 
 c1, c2, c3 = st.columns(3)
 umbral_f = umbral_base + st.session_state['auto_bias']
 
 with c1:
-    st.metric("Umbral de Decisión IA", f"{umbral_f:.1f}%")
+    st.metric("Umbral de Decisión Actual", f"{umbral_f:.1f}%")
 with c2:
     st.metric("Visión de la IA", f"{dias_vision_ia} Días al futuro")
 with c3:
@@ -177,24 +175,24 @@ with c3:
 
 st.divider()
 
-if st.button(f"🏁 Iniciar Simulación ({dias_simulacion} Días)"):
-    with st.spinner(f"Entrenando a la IA para predecir a {dias_vision_ia} días vista..."):
-        curva, n_ops, u_final = ejecutar_simulacion_fase30("QQQ", dias_simulacion, dias_vision_ia)
-        st.line_chart(curva)
+if st.button(f"🏁 Iniciar Calibración (Simulación {dias_simulacion} Días)"):
+    with st.spinner("Escaneando las probabilidades ocultas de la IA..."):
+        curva, n_ops, u_final, pico_prob = ejecutar_simulacion_calibracion("QQQ", dias_simulacion, dias_vision_ia)
         
+        st.line_chart(curva)
         beneficio = curva[-1] - capital_total
         
-        # AUTO-CORRECCIÓN
-        if beneficio < 0 and n_ops > 2:
-            st.session_state['auto_bias'] += 0.5
-            st.warning("Ajustando sesgo para filtrar falsas tendencias.")
-        elif beneficio > 0:
-            st.session_state['auto_bias'] = max(-5.0, st.session_state['auto_bias'] - 0.5)
-            st.success("¡Excelente! La alineación temporal ha capturado la verdadera tendencia.")
-
-        c_a, c_b, c_c = st.columns(3)
+        c_a, c_b, c_c, c_d = st.columns(4)
         c_a.metric("Operaciones", n_ops)
-        c_b.metric("Beneficio Neto Total", f"{beneficio:.2f} €", delta="Alineación Temporal Activa")
+        c_b.metric("Beneficio Neto", f"{beneficio:.2f} €")
         c_c.metric("Capital Final", f"{curva[-1]:.2f} €")
         
-        st.markdown(f"**Análisis de Flujo:** La IA ahora estudia qué pasaba en el mercado exactamente {dias_vision_ia} días antes de que el QQQ subiera más de un 1%. Ya no persigue saltos de 24 horas.")
+        # EL DATO VITAL: El Pico Máximo de Convicción
+        c_d.metric("Pico Máx. de IA", f"{pico_prob:.1f}%", delta="Confianza Real", delta_color="normal")
+        
+        st.divider()
+        if n_ops == 0:
+            st.error(f"⚠️ PARÁLISIS: La IA nunca superó el {umbral_f}%. Su pico máximo de confianza en 180 días fue solo del {pico_prob:.1f}%.")
+            st.info(f"🛠️ **Solución del Arquitecto:** Baja el 'Umbral Probabilidad (%)' en la barra lateral a un valor ligeramente por debajo de {pico_prob:.1f}% (por ejemplo, {pico_prob - 1.0:.1f}%) y vuelve a simular.")
+        elif beneficio > 0:
+            st.success("✅ ¡Calibración Perfecta! Hemos encontrado el punto dulce para hacer Swing Trading institucional.")
