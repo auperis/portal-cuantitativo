@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (CORREGIDA V3): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Forzar la identificación del Project ID directamente en initialize_app.
+# ARQUITECTURA FASE 11 (CORREGIDA V4): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Forzar el Project ID directamente en el cliente de Firestore.
 # ==============================================================================
 
 import streamlit as st
@@ -20,7 +20,7 @@ from firebase_admin import firestore, initialize_app, credentials, _apps
 import firebase_admin
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN DEFINITIVA AL PROJECT ID)
+# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN DEFINITIVA POR INYECCIÓN DIRECTA)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
@@ -28,33 +28,31 @@ st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_str = os.environ.get('__firebase_config')
 
-# PARSEO DE SEGURIDAD: Obtenemos el Project ID para el oficial de aduanas
+# PARSEO DE SEGURIDAD
 project_id = None
 if firebase_config_str:
     try:
         config_dict = json.loads(firebase_config_str)
         project_id = config_dict.get('projectId')
-    except:
-        pass
+    except Exception as e:
+        st.sidebar.error(f"Error al leer config: {e}")
 
-# Inicializamos la App inyectando el ID de forma explícita en las opciones
-if not _apps:
-    try:
+# Inicializamos la App y el Cliente con inyección directa del Project ID
+try:
+    if not _apps:
         if project_id:
-            # Forzamos la variable de entorno y la configuración de inicialización
             os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
             initialize_app(options={'projectId': project_id})
         else:
             initialize_app()
-    except Exception as e:
-        st.error(f"Error técnico de inicialización: {e}")
-
-# Conexión al cliente de base de datos (Ahora con el sello de aduanas correcto)
-try:
-    db = firestore.client()
+    
+    # CAMBIO CRÍTICO: Pasamos el project_id directamente al cliente de firestore
+    # Esto soluciona el error donde initialize_app no propaga el ID al cliente.
+    db = firestore.client(project=project_id)
 except Exception as e:
+    # Si falla la conexión, mostramos un aviso pero no bloqueamos la web
     st.error(f"Error al conectar con Firestore: {e}")
-    st.info("Asegúrate de que la integración de base de datos esté activa en tu entorno.")
+    db = None
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL (Barra Lateral)
@@ -113,20 +111,18 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
 
 # --- PERSISTENCIA (FIRESTORE) ---
 def guardar_en_nube(data_list):
+    if db is None: return
     for item in data_list:
         try:
-            # Estructura de colección obligatoria para permisos de escritura
             db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document().set(item)
-        except Exception as e:
-            pass
+        except: pass
 
 def cargar_de_nube():
+    if db is None: return []
     try:
-        # Recuperamos el historial ordenado por fecha
         docs = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').order_by('Fecha', direction=firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
-    except:
-        return []
+    except: return []
 
 # ------------------------------------------------------------------------------
 # 4. EJECUCIÓN WEB
@@ -163,7 +159,6 @@ if boton_analizar:
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
-        # ESTÉTICA: Aplicamos el degradado verde para una lectura profesional
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -171,17 +166,17 @@ if boton_analizar:
         
         ganador = df_rank.iloc[0]
         if ganador["Convicción (%)"] >= umbral_conviccion:
-            st.success(f"👑 ACTIVO SELECCIONADO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
+            st.success(f"👑 ACTIVO ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
             acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Acciones (Decimales)", f"{acc:.4f}")
+            c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
             c2.metric("Inversión Sugerida", f"{inv:.2f} €")
             c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
-            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Capital protegido.")
+            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
             st.toast("✅ Datos sincronizados con la nube.")
         else:
-            st.error("Convicción insuficiente en el radar. Mantenemos 100% de liquidez.")
+            st.error("Convicción insuficiente. Mantenemos liquidez.")
 
 st.markdown("---")
 st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
