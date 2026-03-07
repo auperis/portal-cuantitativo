@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11: PERSISTENCIA TOTAL (CLOUD STORAGE) + UI PREMIUM
-# Objetivo: Guardar predicciones para siempre y recuperar el ranking visual.
+# ARQUITECTURA FASE 11 (CORREGIDA): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Solucionar ValueError de Firestore y restaurar visualización verde.
 # ==============================================================================
 
 import streamlit as st
@@ -13,25 +13,36 @@ from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
 from datetime import datetime
 import json
+import os
 
-# --- IMPORTACIONES PARA LA MEMORIA EN LA NUBE (FIRESTORE) ---
+# --- CONEXIÓN SATELITAL (FIRESTORE) ---
 from firebase_admin import firestore, initialize_app, credentials, _apps
 import firebase_admin
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN E INICIALIZACIÓN DE LA NUBE
+# 1. INICIALIZACIÓN DE LA NUBE (SOLUCIÓN AL PROJECT ID)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
+# Extraemos el ID del proyecto directamente de la configuración del entorno
+app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
+firebase_config_str = os.environ.get('__firebase_config')
+
 if not _apps:
     try:
-        # Inicialización automática para el entorno de ejecución
-        initialize_app()
-    except:
+        if firebase_config_str:
+            # Si el entorno nos da la configuración, extraemos el projectId
+            config_dict = json.loads(firebase_config_str)
+            project_id = config_dict.get('projectId')
+            initialize_app(options={'projectId': project_id})
+        else:
+            # Fallback para desarrollo local
+            initialize_app()
+    except Exception as e:
+        # Si ya está inicializada o falla, intentamos continuar
         pass
 
 db = firestore.client()
-app_id = "mi-portal-ia-1000"
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL (Barra Lateral)
@@ -47,7 +58,7 @@ umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", 50, 80, 58
 boton_analizar = st.sidebar.button("Activar Radar y Guardar en la Nube")
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR LÓGICO Y CÁLCULOS
+# 3. MOTOR LÓGICO
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     return yf.Ticker(ticker).history(period="3y")
@@ -88,23 +99,19 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
     if (acc * precio) > capital: acc = capital / precio
     return acc, (acc * precio), perdida_max_euros
 
-# --- FUNCIONES DE PERSISTENCIA (MEMORIA SATELITAL) ---
+# --- PERSISTENCIA (FIRESTORE) ---
 def guardar_en_nube(data_list):
-    """Guarda los resultados del escaneo en la base de datos."""
     for item in data_list:
         try:
-            doc_ref = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document()
-            doc_ref.set(item)
-        except:
-            pass
+            # Siguiendo estrictamente la ruta de la Fase 11
+            db.collection('artifacts', app_id, 'public', 'data', 'predicciones').document().set(item)
+        except: pass
 
 def cargar_de_nube():
-    """Recupera el historial persistente."""
     try:
         docs = db.collection('artifacts', app_id, 'public', 'data', 'predicciones').order_by('Fecha', direction=firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
-    except:
-        return []
+    except: return []
 
 # ------------------------------------------------------------------------------
 # 4. EJECUCIÓN WEB
@@ -141,7 +148,7 @@ if boton_analizar:
         df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
         
         st.subheader("🏆 Ranking Institucional de Hoy")
-        # El degradado verde que solicitaste para mejor visualización
+        # RESTAURADO: El degradado verde que facilita la lectura
         st.dataframe(
             df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
             use_container_width=True
@@ -153,16 +160,16 @@ if boton_analizar:
             acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
             
             c1, c2, c3 = st.columns(3)
-            c1.metric("Acciones (Decimales)", f"{acc:.4f}")
+            c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
             c2.metric("Inversión Total", f"{inv:.2f} €")
             c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
-            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
+            st.info(f"👉 **Orden sugerida:** Compra {acc:.4f} de {ganador['Activo']}.")
             st.toast("✅ Predicciones guardadas en la nube.")
         else:
             st.error("Ningún activo superó el filtro. Mantener liquidez.")
 
 st.markdown("---")
-st.subheader("🌐 Registro Histórico (Cloud Storage)")
+st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
 historial_nube = cargar_de_nube()
 
 if historial_nube:
