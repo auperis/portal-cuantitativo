@@ -1,6 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 9: EL RADAR MULTI-ACTIVO (SCREENER)
-# Objetivo: Escanear múltiples activos simultáneamente para evitar la inactividad.
+# ARQUITECTURA FASE 10: PERSISTENCIA Y EJECUCIÓN FRACCIONADA
+# Objetivo: Resolver el error de '0 acciones' permitiendo decimales (Fractional Shares).
+# Este código es el motor completo y visual para Streamlit.
 # ==============================================================================
 
 import streamlit as st
@@ -10,38 +11,40 @@ import numpy as np
 import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-import time
+import matplotlib.pyplot as plt
+from datetime import datetime
 
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN DE LA PÁGINA
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
+st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="🎯")
 
-st.title("📡 Radar Cuantitativo IA (Screener)")
-st.markdown("Escáner multi-activo para localizar la mayor probabilidad estadística del mercado.")
+st.title("🎯 Radar IA: Ejecución Fraccionada")
+st.markdown("Optimización de capital de 1.000 € para activos de alto precio (ej. QQQ, SPY).")
 
 # ------------------------------------------------------------------------------
 # 2. PANEL DE CONTROL (Barra Lateral)
 # ------------------------------------------------------------------------------
-st.sidebar.header("Parámetros de Escaneo")
-# NUEVO: Ahora pedimos una lista de activos separados por comas
-tickers_input = st.sidebar.text_input("Activos a escanear (separados por coma)", value="SPY, GLD, QQQ, TLT")
+st.sidebar.header("Configuración del Radar")
+# Lista de activos sugeridos para una cuenta de 1.000 €
+tickers_input = st.sidebar.text_input("Lista de Activos (separados por coma)", value="SPY, GLD, QQQ, TLT, BTC-USD")
 
-st.sidebar.header("🛡️ Gestión de Riesgo y Convicción")
-capital_usuario = st.sidebar.number_input("Capital Total (€)", min_value=100, max_value=10000, value=1000)
-stop_loss_usuario = st.sidebar.slider("Stop-Loss (Paracaídas %)", min_value=1.0, max_value=15.0, value=5.0, step=0.5)
-umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", min_value=50, max_value=80, value=58, step=1)
+st.sidebar.header("🛡️ Gestión de Riesgo")
+capital_usuario = st.sidebar.number_input("Capital Total (€)", min_value=100, value=1000)
+stop_loss_usuario = st.sidebar.slider("Stop-Loss (Paracaídas %)", 1.0, 15.0, 5.0, 0.5)
+umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", 50, 80, 58)
 
-boton_analizar = st.sidebar.button("Activar Radar IA")
+boton_analizar = st.sidebar.button("Activar Radar y Calcular Órdenes")
 
 # ------------------------------------------------------------------------------
-# 3. EL MOTOR OCULTO Y EL ESCUDO
+# 3. MOTOR LÓGICO (IA + MATEMÁTICAS DE RIESGO)
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
-    activo = yf.Ticker(ticker)
-    return activo.history(period="3y")
+    """Descarga datos históricos de Yahoo Finance."""
+    return yf.Ticker(ticker).history(period="3y")
 
 def calcular_indicadores(df):
+    """Calcula las pistas (features) para que la IA tome decisiones."""
     datos = df.copy()
     datos['Retorno_Hoy_%'] = datos['Close'].pct_change() * 100
     datos['Volatilidad_5D'] = datos['Close'].rolling(window=5).std()
@@ -49,115 +52,97 @@ def calcular_indicadores(df):
     datos['Volumen_Relativo'] = datos['Volume'] / datos['Media_Volumen_20D']
     datos['Retorno_3D_%'] = datos['Close'].pct_change(periods=3) * 100
     
+    # Cálculo del RSI (La Goma Elástica)
     delta = datos['Close'].diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
+    up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
     ema_up = up.ewm(com=13, adjust=False).mean()
     ema_down = down.ewm(com=13, adjust=False).mean()
-    rs = ema_up / ema_down
-    datos['RSI_14'] = 100 - (100 / (1 + rs))
+    ema_down = ema_down.replace(0, 0.001) # Evitar división por cero
+    datos['RSI_14'] = 100 - (100 / (1 + (ema_up / ema_down)))
     
     datos['Target_Mañana_Sube'] = np.where(datos['Close'].shift(-1) > datos['Close'], 1, 0)
     return datos.dropna()
 
 def entrenar_modelo(df):
-    columnas_pistas = ['Retorno_Hoy_%', 'Volatilidad_5D', 'Volumen_Relativo', 'Retorno_3D_%', 'RSI_14']
-    indice_corte = int(len(df) * 0.8)
-    datos_estudio = df.iloc[:indice_corte]
-    datos_examen = df.iloc[indice_corte:]
+    """Entrena el cerebro de la IA para cada activo del radar."""
+    pistas = ['Retorno_Hoy_%', 'Volatilidad_5D', 'Volumen_Relativo', 'Retorno_3D_%', 'RSI_14']
+    corte = int(len(df) * 0.8)
+    estudio, examen = df.iloc[:corte], df.iloc[corte:]
     
-    modelo_ia = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-    modelo_ia.fit(datos_estudio[columnas_pistas], datos_estudio['Target_Mañana_Sube'])
+    modelo = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    modelo.fit(estudio[pistas], estudio['Target_Mañana_Sube'])
     
-    probabilidades_examen = modelo_ia.predict_proba(datos_examen[columnas_pistas])
-    prob_subir_array = probabilidades_examen[:, 1] * 100
-    
-    predicciones_base = np.where(prob_subir_array >= 50.0, 1, 0)
-    precision = accuracy_score(datos_examen['Target_Mañana_Sube'], predicciones_base) * 100
-    
-    return modelo_ia, precision, columnas_pistas
+    prob = modelo.predict_proba(examen[pistas])[:, 1] * 100
+    precision = accuracy_score(examen['Target_Mañana_Sube'], np.where(prob >= 50, 1, 0)) * 100
+    return modelo, precision, pistas
 
-def calcular_tamaño_posicion(capital_total, precio_accion, stop_loss_porcentaje, riesgo_maximo_porcentaje=2.0):
-    riesgo_en_euros = capital_total * (riesgo_maximo_porcentaje / 100)
-    riesgo_por_accion = precio_accion * (stop_loss_porcentaje / 100)
+# FUNCIÓN CRÍTICA: Ahora permite comprar trozos de acciones (decimales)
+def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
+    """Calcula cuántas acciones comprar basándose en el riesgo máximo permitido (20€)."""
+    perdida_max_euros = capital * (riesgo_max / 100)
+    riesgo_por_accion = precio * (stop_loss / 100)
+    
     if riesgo_por_accion <= 0: return 0, 0, 0
-    numero_acciones = int(riesgo_en_euros / riesgo_por_accion)
-    capital_a_invertir = numero_acciones * precio_accion
-    return numero_acciones, capital_a_invertir, riesgo_en_euros
+    
+    # Permitimos decimales para activos caros
+    acciones_a_comprar = perdida_max_euros / riesgo_por_accion
+    
+    # Límite de seguridad: No invertir más del capital total disponible
+    if (acciones_a_comprar * precio) > capital:
+        acciones_a_comprar = capital / precio
+        
+    capital_total_invertido = acciones_a_comprar * precio
+    return acciones_a_comprar, capital_total_invertido, perdida_max_euros
 
 # ------------------------------------------------------------------------------
-# 4. EJECUCIÓN WEB (EL BUCLE DE ESCANEO)
+# 4. EJECUCIÓN DEL PORTAL
 # ------------------------------------------------------------------------------
 if boton_analizar:
-    # Limpiamos la lista de activos que introdujo el usuario
     lista_activos = [x.strip().upper() for x in tickers_input.split(',')]
-    resultados_escaneo = []
+    resultados = []
     
-    st.markdown(f"### 📡 Escaneando {len(lista_activos)} activos simultáneamente...")
-    barra_progreso = st.progress(0)
-    
-    # BUCLE PRINCIPAL: Enviamos al ojeador a cada activo uno por uno
-    for idx, ticker in enumerate(lista_activos):
-        with st.spinner(f"Entrenando red neuronal para {ticker}..."):
-            try:
-                datos_crudos = obtener_datos(ticker)
-                if not datos_crudos.empty and len(datos_crudos) > 50:
-                    datos_procesados = calcular_indicadores(datos_crudos)
-                    modelo, precision_ia, pistas = entrenar_modelo(datos_procesados)
-                    
-                    # Extraemos los datos de HOY para este activo
-                    datos_hoy = datos_procesados.iloc[-1:]
-                    probabilidades_hoy = modelo.predict_proba(datos_hoy[pistas])[0]
-                    probabilidad_subida = probabilidades_hoy[1] * 100
-                    precio_actual = datos_hoy['Close'].values[0]
-                    rsi_hoy = datos_hoy['RSI_14'].values[0]
-                    
-                    # Guardamos el informe en nuestra tabla de resultados
-                    resultados_escaneo.append({
-                        "Activo": ticker,
-                        "Convicción de Subida (%)": round(probabilidad_subida, 2),
-                        "RSI Actual": round(rsi_hoy, 2),
-                        "Precisión Histórica (%)": round(precision_ia, 2),
-                        "Precio ($)": round(precio_actual, 2)
-                    })
-            except Exception as e:
-                st.warning(f"No se pudo procesar {ticker}. Posible error de símbolo.")
+    progreso = st.progress(0)
+    for i, ticker in enumerate(lista_activos):
+        try:
+            df_raw = obtener_datos(ticker)
+            if not df_raw.empty:
+                df = calcular_indicadores(df_raw)
+                mod, prec, pists = entrenar_modelo(df)
                 
-        # Actualizamos la barra de progreso visual
-        barra_progreso.progress((idx + 1) / len(lista_activos))
-    
-    # --- ZONA DE RANKING VISUAL ---
-    if resultados_escaneo:
-        # Convertimos la lista de resultados en una tabla y la ordenamos de mayor a menor convicción
-        df_ranking = pd.DataFrame(resultados_escaneo)
-        df_ranking = df_ranking.sort_values(by="Convicción de Subida (%)", ascending=False).reset_index(drop=True)
+                # Predicción actual
+                hoy = df.iloc[-1:]
+                prob = mod.predict_proba(hoy[pists])[0][1] * 100
+                precio = hoy['Close'].values[0]
+                
+                resultados.append({
+                    "Activo": ticker,
+                    "Convicción (%)": round(prob, 2),
+                    "Precisión (%)": round(prec, 2),
+                    "Precio ($)": round(precio, 2)
+                })
+        except Exception as e: 
+            st.warning(f"Error procesando {ticker}: {e}")
+        progreso.progress((i + 1) / len(lista_activos))
+
+    if resultados:
+        df_rank = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
+        st.subheader("🏆 Ranking de Oportunidades")
+        st.dataframe(df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
         
-        st.markdown("---")
-        st.subheader("🏆 Ranking Institucional de Oportunidades")
-        
-        # Mostramos la tabla elegante en la web
-        st.dataframe(df_ranking.style.background_gradient(cmap='Greens', subset=['Convicción de Subida (%)']), use_container_width=True)
-        
-        # --- EL GANADOR ABSOLUTO ---
-        mejor_activo = df_ranking.iloc[0]
-        st.markdown("---")
-        
-        if mejor_activo["Convicción de Subida (%)"] >= umbral_conviccion:
-            st.success(f"👑 ACTIVO ELEGIDO PARA DESPLIEGUE: **{mejor_activo['Activo']}**")
-            st.markdown(f"La IA determina que **{mejor_activo['Activo']}** es la mejor opción matemática hoy, con un **{mejor_activo['Convicción de Subida (%)']}%** de convicción (superando tu filtro del {umbral_conviccion}%).")
+        ganador = df_rank.iloc[0]
+        if ganador["Convicción (%)"] >= umbral_conviccion:
+            st.success(f"👑 ACTIVO ELEGIDO: {ganador['Activo']} con {ganador['Convicción (%)']}% de convicción.")
             
-            st.subheader("🛡️ Órdenes de Ejecución para tu Cuenta de 1.000 €")
-            acciones, inversion, riesgo_max = calcular_tamaño_posicion(capital_usuario, mejor_activo["Precio ($)"], stop_loss_usuario)
+            # Cálculo de la orden con decimales
+            num_acciones, inv_total, riesgo = calcular_ejecucion_fraccionada(
+                capital_usuario, ganador["Precio ($)"], stop_loss_usuario
+            )
             
             col1, col2, col3 = st.columns(3)
-            col1.metric("Acciones a Comprar", f"{acciones}")
-            col2.metric("Capital a Invertir", f"{inversion:.2f} €")
-            col3.metric("Riesgo Máximo", f"{riesgo_max:.2f} €")
+            col1.metric("Acciones (Decimales)", f"{num_acciones:.4f}")
+            col2.metric("Inversión en Euros", f"{inv_total:.2f} €")
+            col3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
             
-            st.info(f"👉 **Instrucción al Broker:** Ignora el resto de la lista. Compra {acciones} acciones de {mejor_activo['Activo']}. Coloca el Stop-Loss automático al -{stop_loss_usuario}%. Si la IA se equivoca, tu pérdida está contenida en {riesgo_max:.2f} €.")
+            st.info(f"👉 **Instrucción al Broker:** Compra **{num_acciones:.4f}** acciones de {ganador['Activo']}. Broker sugerido: Revolut o Interactive Brokers.")
         else:
-            st.error(f"🛑 EL GANADOR NO SUPERA EL FILTRO")
-            st.markdown(f"El activo con mayor puntuación fue **{mejor_activo['Activo']}** (Convicción: {mejor_activo['Convicción de Subida (%)']}%). Sin embargo, **NO SUPERA** tu exigencia mínima del {umbral_conviccion}%.")
-            st.warning("👉 **Instrucción de Sistema:** Ningún activo del radar es digno de arriesgar tu capital hoy. MANTENER EL 100% EN EFECTIVO (Liquidez). El coste de inactividad es menor que el coste de operar sin ventaja matemática.")
-    else:
-        st.error("El radar no encontró datos válidos.")
+            st.error(f"Ningún activo supera el filtro del {umbral_conviccion}%. MANTENER LIQUIDEZ.")
