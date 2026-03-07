@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 19.1: EL SIMULADOR DE VUELO (CORRECCIÓN DE ERROR)
-# Objetivo: Corregir NameError en la métrica de beneficio final.
+# ARQUITECTURA FASE 20: INGENIERÍA DE CARACTERÍSTICAS (FEATURE ENGINEERING)
+# Objetivo: Añadir RSI y Volatilidad para que la IA supere el umbral de adaptación.
 # ==============================================================================
 
 import streamlit as st
@@ -9,13 +9,13 @@ import pandas as pd
 import numpy as np
 import requests
 from sklearn.ensemble import RandomForestClassifier
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Simulador", layout="wide", page_icon="🎮")
+st.set_page_config(page_title="Portal IA - Inteligencia Avanzada", layout="wide", page_icon="🧠")
 
 if 'performance_score' not in st.session_state:
     st.session_state['performance_score'] = 1.0
@@ -31,98 +31,106 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("⚖️ Fricción y Riesgo")
-tipo_activo = st.sidebar.radio("Estrategia Fiscal", ["Acumulación (Eficiente)", "Distribución (Lastre)"])
+st.sidebar.header("⚖️ Parámetros Globales")
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
-capital_total = st.sidebar.number_input("Capital en Gestión (€)", value=1000)
+capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 stop_loss_pct = st.sidebar.slider("Stop-Loss (%)", 1.0, 10.0, 5.0)
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR LÓGICO IA
+# 3. MOTOR DE CÁLCULO AVANZADO (Músculo para la IA)
 # ------------------------------------------------------------------------------
-def entrenar_y_predecir(df_historico, columnas_pistas):
-    df = df_historico.copy()
+def calcular_indicadores_avanzados(df):
+    d = df.copy()
+    # Pista 1: Retorno (Velocidad)
+    d['Retorno'] = d['Close'].pct_change() * 100
+    # Pista 2: Distancia a Media (Ubicación)
+    d['Media_20'] = d['Close'].rolling(20).mean()
+    d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
+    # Pista 3: Volatilidad (Nerviosismo del mercado)
+    d['Volatilidad'] = d['Retorno'].rolling(10).std()
+    # Pista 4: RSI (Fuerza Relativa - El Telescopio)
+    delta = d['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    rs = gain / loss
+    d['RSI'] = 100 - (100 / (1 + rs))
+    
+    return d.dropna()
+
+def entrenar_y_predecir_avanzado(df_hist, pistas):
+    df = df_hist.copy()
     df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
     df = df.dropna()
     
-    # Entrenamiento
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
-    model.fit(df[columnas_pistas], df['Target'])
+    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
+    model.fit(df[pistas], df['Target'])
     
-    # Predicción última fila
-    prob = model.predict_proba(df[columnas_pistas].iloc[-1:]) [0][1] * 100
+    prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. FUNCIÓN DE BACKTESTING (EL SIMULADOR)
+# 4. SIMULADOR DE VUELO ACTUALIZADO
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion(ticker, dias_atras=30):
-    df = yf.Ticker(ticker).history(period="2y")
-    df['Retorno'] = df['Close'].pct_change() * 100
-    df['Media_20'] = df['Close'].rolling(20).mean()
-    df['Distancia'] = ((df['Close'] / df['Media_20']) - 1) * 100
-    df = df.dropna()
+def ejecutar_backtest(ticker, dias=30):
+    raw_data = yf.Ticker(ticker).history(period="2y")
+    df = calcular_indicadores_avanzados(raw_data)
     
-    pistas = ['Retorno', 'Distancia']
-    capital_simulado = capital_total
-    historial_curva = []
+    pistas = ['Retorno', 'Distancia', 'Volatilidad', 'RSI']
+    capital_sim = capital_total
+    curva = []
+    operaciones_realizadas = 0
     
-    # Recorremos los últimos X días para simular
-    for i in range(len(df) - dias_atras, len(df)):
-        ventana_estudio = df.iloc[:i]
-        datos_hoy = df.iloc[i]
+    for i in range(len(df) - dias, len(df)):
+        estudio = df.iloc[:i]
+        hoy = df.iloc[i]
         
-        # IA predice basándose solo en lo que sabía "ese día"
-        prob = entrenar_y_predecir(ventana_estudio, pistas)
-        
-        # Umbral dinámico
+        prob = entrenar_y_predecir_avanzado(estudio, pistas)
         umbral = 55.5 * st.session_state['performance_score']
         
         if prob >= umbral:
-            precio_entrada = datos_hoy['Close']
-            resultado_real_manana = df.iloc[i+1]['Close'] if i+1 < len(df) else precio_entrada
-            
-            var_pct = (resultado_real_manana / precio_entrada) - 1
-            ganancia_bruta = (capital_simulado * 0.1) * var_pct # 10% de exposición
-            coste_peaje = comision_fija * 2
-            
-            capital_simulado += (ganancia_bruta - coste_peaje)
+            operaciones_realizadas += 1
+            var_mañana = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
+            resultado = (capital_sim * 0.1) * var_mañana # Inversión del 10%
+            capital_sim += (resultado - (comision_fija * 2))
         
-        historial_curva.append(capital_simulado)
+        curva.append(capital_sim)
         
-    return historial_curva
+    return curva, operaciones_realizadas
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🧠 Portal IA: Simulador de Vuelo")
+st.title("🧠 Portal IA: Ingeniería de Características")
 
-tab1, tab2 = st.tabs(["🎯 Radar en Vivo", "🎮 Simulador de Estrategia"])
+tab1, tab2 = st.tabs(["🎯 Radar Adaptativo", "🎮 Simulador de Precisión"])
 
 with tab1:
-    st.info(f"Estado del Sistema: Adaptación a {st.session_state['performance_score']:.2f}x | Umbral: {(55.5 * st.session_state['performance_score']):.1f}%")
-    st.write("Usa la pestaña 'Simulador' para validar la estrategia antes de ejecutar el Radar.")
+    umbral_actual = 55.5 * st.session_state['performance_score']
+    st.info(f"Factor de Adaptación: {st.session_state['performance_score']:.2f}x | Umbral Requerido: {umbral_actual:.1f}%")
+    st.write("Con los nuevos indicadores (RSI y Volatilidad), la IA tiene más 'argumentos' para superar el umbral.")
 
 with tab2:
-    st.subheader("Simulación de los últimos 30 días")
-    activo_sim = st.selectbox("Selecciona Activo para Simular", ["QQQ", "SPY", "BTC-USD"])
+    st.subheader("Simulador de Estrategia con Pistas Avanzadas")
+    activo = st.selectbox("Activo para validar", ["QQQ", "SPY", "BTC-USD"])
     
-    if st.button("🏁 Iniciar Simulación Histórica"):
-        with st.spinner("Corriendo simulador..."):
-            curva = ejecutar_simulacion(activo_sim)
+    if st.button("🏁 Iniciar Simulación"):
+        with st.spinner("Procesando datos con RSI y Volatilidad..."):
+            curva_datos, num_ops = ejecutar_backtest(activo)
             
-            st.line_chart(curva)
-            beneficio_final = curva[-1] - capital_total
+            st.line_chart(curva_datos)
+            beneficio = curva_datos[-1] - capital_total
             
-            c1, c2 = st.columns(2)
-            # CORRECCIÓN AQUÍ: Se eliminó la 'n' de 'beneficion_final'
-            c1.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio_final:.2f} €")
-            c2.metric("Eficiencia del Simulador", "Óptima" if beneficio_final > 0 else "Crítica")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Resultado Final", f"{curva_datos[-1]:.2f} €", delta=f"{beneficio:.2f} €")
+            c2.metric("Operaciones", num_ops)
+            c3.metric("Estado", "Activo" if num_ops > 0 else "Paralizado")
 
-# --- BOTONES DE ADAPTACIÓN ---
+# --- CONTROL DE ADAPTACIÓN ---
 st.sidebar.divider()
 st.sidebar.subheader("🕹️ Entrenamiento")
 if st.sidebar.button("👍 ACIERTO"):
     st.session_state['performance_score'] = max(0.9, st.session_state['performance_score'] - 0.05)
 if st.sidebar.button("👎 ERROR"):
     st.session_state['performance_score'] = min(1.3, st.session_state['performance_score'] + 0.05)
+if st.sidebar.button("♻️ REINICIAR ADAPTACIÓN"):
+    st.session_state['performance_score'] = 1.0
