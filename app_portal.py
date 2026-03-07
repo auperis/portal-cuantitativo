@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 24: OPTIMIZADOR DE TOLERANCIA (TOLERANCE LOGIC)
-# Objetivo: Flexibilizar los filtros para permitir operativa en mercados 
-# en recuperación sin comprometer la seguridad de los 1.000 €.
+# ARQUITECTURA FASE 25: AGENTE DE AUTO-CORRECCIÓN (SELF-CORRECTING LOGIC)
+# Objetivo: Ajustar automáticamente el umbral de convicción basándose en el
+# rendimiento neto (Beneficio vs Comisiones) para proteger los 1.000 €.
 # ==============================================================================
 
 import streamlit as st
@@ -16,13 +16,14 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Tolerancia", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="Portal IA - Auto-Corrección", layout="wide", page_icon="🤖")
 
-if 'performance_score' not in st.session_state:
-    st.session_state['performance_score'] = 1.0
+# Memoria de rendimiento autónomo
+if 'auto_bias' not in st.session_state:
+    st.session_state['auto_bias'] = 0.0 # Ajuste automático del umbral
 
 # ------------------------------------------------------------------------------
-# 2. BARRA LATERAL: AJUSTES DE PRECISIÓN
+# 2. BARRA LATERAL: AJUSTES ADN
 # ------------------------------------------------------------------------------
 st.sidebar.header("📡 Comunicaciones (ADN)")
 TOKEN_ARQUITECTO = "8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA"
@@ -33,17 +34,8 @@ chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
 st.sidebar.header("⚖️ Diales de Tolerancia")
-
-# Dial 1: Probabilidad
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0, 
-                                 help="Bajamos ligeramente de 60% a 58% para dar más aire.")
-
-# Dial 2: Margen de Tendencia (LA CLAVE)
-margen_tendencia = st.sidebar.slider("Margen de Tendencia (%)", 0.0, 5.0, 1.5, 
-                                      help="Permite operar si el precio está hasta un 1.5% por debajo de la Media 50.")
-
-# Dial 3: Volatilidad
-vol_min = st.sidebar.slider("Volatilidad Mínima", 0.0, 2.0, 0.5)
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
+margen_tendencia = st.sidebar.slider("Margen de Tendencia (%)", 0.0, 5.0, 1.5)
 
 st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
@@ -58,7 +50,6 @@ def calcular_indicadores(df):
     d['Media_50'] = d['Close'].rolling(50).mean()
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
     
-    # RSI (Indicador de agotamiento)
     delta = d['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -76,75 +67,69 @@ def entrenar_ia(df_hist):
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR CON LÓGICA DE TOLERANCIA
+# 4. SIMULADOR CON AUTO-CORRECCIÓN
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_tolerante(ticker, dias=30):
+def ejecutar_simulacion_autonoma(ticker, dias=30):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
     cap_sim = capital_total
     curva = []
     ops = 0
-    rechazos = {"Prob": 0, "Vol": 0, "Tend": 0}
+    
+    # El umbral ahora incluye el "Sesgo Automático" del sistema
+    umbral_final = umbral_base + st.session_state['auto_bias']
     
     for i in range(len(df) - dias, len(df)):
         estudio = df.iloc[:i]
         hoy = df.iloc[i]
         prob = entrenar_ia(estudio)
-        umbral_actual = umbral_base * st.session_state['performance_score']
         
-        # --- LÓGICA DE TOLERANCIA ---
-        pasa_prob = prob >= umbral_actual
-        pasa_vol = hoy['Volatilidad'] > vol_min
+        pasa_prob = prob >= umbral_final
+        limite_inf = hoy['Media_50'] * (1 - (margen_tendencia / 100))
+        pasa_tend = hoy['Close'] >= limite_inf
         
-        # Tolerancia: Precio > (Media 50 - Margen %)
-        limite_inferior_tendencia = hoy['Media_50'] * (1 - (margen_tendencia / 100))
-        pasa_tend = hoy['Close'] >= limite_inferior_tendencia
-        
-        if pasa_prob and pasa_vol and pasa_tend:
+        if pasa_prob and pasa_tend and hoy['Volatilidad'] > 0.5:
             ops += 1
             var_futura = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
             cap_sim += (cap_sim * 0.2 * var_futura) - (comision_fija * 2)
-        else:
-            if not pasa_prob: rechazos["Prob"] += 1
-            if not pasa_vol: rechazos["Vol"] += 1
-            if not pasa_tend: rechazos["Tend"] += 1
             
         curva.append(cap_sim)
-        
-    return curva, ops, rechazos
+    
+    return curva, ops, umbral_final
 
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD
 # ------------------------------------------------------------------------------
-st.title("⚖️ Portal IA: Optimizador de Tolerancia")
+st.title("🤖 Portal IA: Agente de Auto-Corrección")
 
-tab1, tab2 = st.tabs(["🚀 Control de Radar", "📊 Test de Tolerancia"])
+col1, col2 = st.columns([2, 1])
 
-with tab1:
-    st.info(f"Estado del Sistema: Adaptación a {st.session_state['performance_score']:.2f}x")
-    if st.sidebar.button("♻️ REINICIAR ADAPTACIÓN"):
-        st.session_state['performance_score'] = 1.0
-        st.toast("Sistema reseteado")
-
-with tab2:
-    st.subheader("Simulación QQQ: Rompiendo la Parálisis")
-    if st.button("🏁 Ejecutar Test de Tolerancia"):
-        with st.spinner("Ajustando márgenes y recalculando señales..."):
-            curva, n_ops, rechazos = ejecutar_simulacion_tolerante("QQQ")
-            
+with col1:
+    st.subheader("Simulación y Aprendizaje")
+    if st.button("🏁 Ejecutar Simulación y Auto-Corregir"):
+        with st.spinner("Simulando y ajustando redes neuronales..."):
+            curva, n_ops, u_final = ejecutar_autonoma("QQQ")
             st.line_chart(curva)
+            
             beneficio = curva[-1] - capital_total
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Operaciones", n_ops, delta=f"{n_ops} vs 0 anterior")
-            c2.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio:.2f} €")
-            c3.metric("Tapón Tendencia", rechazos["Tend"], delta="Filtro Flexibilizado", delta_color="normal")
-            
-            if n_ops > 0 and beneficio > -10:
-                st.success(f"🎯 ¡CONEXIÓN RECUPERADA! Has logrado realizar {n_ops} operaciones ajustando la tolerancia.")
-            elif n_ops == 0:
-                st.warning("⚠️ Sigue habiendo parálisis. Prueba a subir el 'Margen de Tendencia' al 3% o bajar la 'Probabilidad' al 55%.")
+            # --- LÓGICA DE AUTO-CORRECCIÓN ---
+            if beneficio < 0 and n_ops > 3:
+                # Si perdemos dinero operando mucho, subimos la exigencia
+                st.session_state['auto_bias'] += 2.0
+                st.warning(f"⚠️ Rendimiento negativo. El Agente ha subido el umbral a {u_final + 2:.1f}% para filtrar el ruido.")
+            elif beneficio > 10:
+                # Si ganamos bien, podemos permitirnos ser un poco más flexibles
+                st.session_state['auto_bias'] -= 1.0
+                st.success(f"✅ Rendimiento positivo. El Agente ha bajado el umbral a {u_final - 1:.1f}% para capturar más señales.")
 
-st.markdown("""
----
-**Nota del Arquitecto:** Al permitir un **Margen de Tendencia**, estamos aceptando que el mercado puede estar un poco "sucio" (bajista), pero confiamos en que la IA ha detectado el giro antes que el indicador tradicional. Para 1.000 €, esto es lo que marca la diferencia entre entrar tarde o entrar en el momento justo.
-""")
+with col2:
+    st.metric("Sesgo de Auto-Corrección", f"+{st.session_state['auto_bias']}%")
+    st.info(f"Este valor se suma a tu umbral base para protegerte del overtrading.")
+    if st.button("♻️ Resetear IA"):
+        st.session_state['auto_bias'] = 0.0
+        st.rerun()
+
+# Espacio para el Radar real
+st.divider()
+st.subheader("📡 Radar de Ejecución en Vivo")
+st.write("Pulsa el botón de simulación primero para que la IA se ajuste al mercado actual.")
