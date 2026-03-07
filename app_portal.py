@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 6.1: EXPLAINABLE AI (XAI)
-# Objetivo: Auditar el cerebro de la IA para detectar qué datos son ruido.
+# ARQUITECTURA FASE 7: LA FÍSICA DEL MERCADO (OSCILADORES)
+# Objetivo: Inyectar el RSI (Relative Strength Index) para detectar reversiones.
 # ==============================================================================
 
 import streamlit as st
@@ -42,15 +42,20 @@ def calcular_indicadores(df):
     datos = df.copy()
     
     # Pistas Base
-    datos['Media_20_Dias'] = datos['Close'].rolling(window=20).mean()
-    datos['Distancia_a_Media_%'] = ((datos['Close'] / datos['Media_20_Dias']) - 1) * 100
     datos['Retorno_Hoy_%'] = datos['Close'].pct_change() * 100
-    
-    # Nuevas Pistas Institucionales
     datos['Volatilidad_5D'] = datos['Close'].rolling(window=5).std()
     datos['Media_Volumen_20D'] = datos['Volume'].rolling(window=20).mean()
     datos['Volumen_Relativo'] = datos['Volume'] / datos['Media_Volumen_20D']
     datos['Retorno_3D_%'] = datos['Close'].pct_change(periods=3) * 100
+    
+    # NUEVO: FÓRMULA MATEMÁTICA DEL RSI (LA GOMA ELÁSTICA)
+    delta = datos['Close'].diff()
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ema_up = up.ewm(com=13, adjust=False).mean()
+    ema_down = down.ewm(com=13, adjust=False).mean()
+    rs = ema_up / ema_down
+    datos['RSI_14'] = 100 - (100 / (1 + rs))
     
     # Target
     datos['Target_Mañana_Sube'] = np.where(datos['Close'].shift(-1) > datos['Close'], 1, 0)
@@ -58,11 +63,13 @@ def calcular_indicadores(df):
     return datos.dropna()
 
 def entrenar_modelo(df):
+    # AÑADIMOS EL RSI AL CEREBRO DE LA IA
     columnas_pistas = [
         'Retorno_Hoy_%', 
         'Volatilidad_5D', 
         'Volumen_Relativo', 
-        'Retorno_3D_%'
+        'Retorno_3D_%',
+        'RSI_14' # Nuestra nueva arma secreta
     ]
     
     indice_corte = int(len(df) * 0.8)
@@ -75,7 +82,6 @@ def entrenar_modelo(df):
     predicciones_examen = modelo_ia.predict(datos_examen[columnas_pistas])
     precision = accuracy_score(datos_examen['Target_Mañana_Sube'], predicciones_examen) * 100
     
-    # NUEVO: Extraemos la importancia matemática de cada pista (El polígrafo)
     importancias = modelo_ia.feature_importances_ * 100
     
     return modelo_ia, precision, columnas_pistas, datos_examen, predicciones_examen, importancias
@@ -114,13 +120,16 @@ if boton_analizar:
             st.error("Error: Activo no encontrado.")
         else:
             datos_procesados = calcular_indicadores(datos_crudos)
-            # Recibimos las importancias del Cerebro
             modelo, precision_ia, pistas, datos_examen, predic_examen, importancias = entrenar_modelo(datos_procesados)
             
             st.info(f"🧠 Cerebro IA analizando {len(pistas)} variables predictivas simultáneamente.")
-            st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%")
             
-            # --- NUEVA ZONA: AUDITORÍA XAI ---
+            # Mostramos si hemos superado la barrera del 50%
+            if precision_ia > 52:
+                st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%", delta="Ventaja Estadística Detectada")
+            else:
+                st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%", delta="Mercado Altamente Aleatorio", delta_color="inverse")
+            
             st.subheader("🔍 Auditoría de IA (Explainable AI - XAI)")
             st.markdown("El Polígrafo: ¿Qué pistas son útiles y cuáles son puro ruido?")
             
@@ -131,14 +140,13 @@ if boton_analizar:
                 x=df_importancias['Importancia %'],
                 y=df_importancias['Pista'],
                 orientation='h',
-                marker_color='#00d2d3' # Color cian tecnológico
+                marker_color='#00d2d3' 
             ))
             fig_xai.update_layout(template='plotly_dark', height=300, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Importancia en la Decisión (%)")
             st.plotly_chart(fig_xai, use_container_width=True)
             
             st.markdown("---")
             
-            # --- ZONA DEL SIMULADOR ---
             st.subheader("✈️ Simulador de Vuelo: IA vs Inversor Tradicional")
             
             df_simulado = ejecutar_simulador(datos_examen, predic_examen, capital_usuario)
@@ -161,11 +169,14 @@ if boton_analizar:
             
             st.markdown("---")
             
-            # --- ZONA DEL ORÁCULO ---
             st.subheader("Señal para Mañana (Tiempo Real)")
             datos_hoy = datos_procesados.iloc[-1:]
             prediccion_mañana = modelo.predict(datos_hoy[pistas])[0]
             precio_actual = datos_hoy['Close'].values[0]
+            
+            # Extraemos el valor del RSI de hoy para mostrarlo al usuario
+            rsi_hoy = datos_hoy['RSI_14'].values[0]
+            st.caption(f"Tensión de la goma elástica (RSI Actual): {rsi_hoy:.2f} / 100")
             
             if prediccion_mañana == 1:
                 st.success("🟢 LUZ VERDE: Probabilidad matemática de subida. Entorno favorable.")
