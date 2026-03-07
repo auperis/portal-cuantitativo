@@ -56,7 +56,7 @@ st.sidebar.divider()
 
 # CONFIGURACIÓN DEL MENSAJERO (TELEGRAM) - ¡ESTO ES LO QUE BUSCABA!
 st.sidebar.subheader("🤖 Configurar Bot Telegram")
-tel_token = st.sidebar.text_input("Bot Token", type="password", help="Pega aquí el Token de @BotFather")
+tel_token = st.sidebar.text_input("Bot Token", type="password", help="8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA")
 tel_chat_id = st.sidebar.text_input("Chat ID", help="Pega aquí tu ID de @userinfobot")
 activar_alertas = st.sidebar.checkbox("Activar Alertas al Móvil", value=False)
 
