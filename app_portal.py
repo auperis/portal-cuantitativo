@@ -1,6 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 22: EL AGENTE DE ALTA CONVICCIÓN (SNIPER MODE)
-# Objetivo: Eliminar el desangre por comisiones endureciendo los filtros de entrada.
+# ARQUITECTURA FASE 23: DETECTOR DE CUELLOS DE BOTELLA (BOTTLENECK DIAGNOSIS)
+# Objetivo: Identificar qué filtro está bloqueando las operaciones para ajustar
+# la sensibilidad del Sniper y recuperar la rentabilidad.
 # ==============================================================================
 
 import streamlit as st
@@ -15,13 +16,13 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Sniper Mode", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Portal IA - Diagnóstico", layout="wide", page_icon="🔬")
 
 if 'performance_score' not in st.session_state:
     st.session_state['performance_score'] = 1.0
 
 # ------------------------------------------------------------------------------
-# 2. BARRA LATERAL: AJUSTES DE PRECISIÓN
+# 2. BARRA LATERAL: AJUSTES DE INFRAESTRUCTURA
 # ------------------------------------------------------------------------------
 st.sidebar.header("📡 Comunicaciones (ADN)")
 TOKEN_ARQUITECTO = "8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA"
@@ -31,119 +32,108 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("💸 Auditoría de Fricción")
+st.sidebar.header("💸 Parámetros de Fricción")
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 
-# AJUSTES SNIPER (MODO AGRESIVO)
-st.sidebar.subheader("🎯 Filtros de Alta Convicción")
-umbral_base = st.sidebar.slider("Umbral Probabilidad Mínima (%)", 50.0, 75.0, 62.0, 
-                                 help="Si la IA no tiene al menos esta convicción, no se mueve.")
-volatilidad_minima = st.sidebar.slider("Volatilidad Mínima Requerida", 0.0, 2.0, 0.8, 
-                                        help="Evita mercados laterales donde la comisión se come el beneficio.")
+# AJUSTES DE SENSIBILIDAD (EL DIAL DEL FRANCOTIRADOR)
+st.sidebar.subheader("🎯 Diales del Sniper")
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 60.0)
+vol_min = st.sidebar.slider("Volatilidad Mínima", 0.0, 2.0, 0.6)
+filtro_tendencia = st.sidebar.checkbox("Activar Filtro Tendencia (Media 50)", value=True)
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR DE CÁLCULO AVANZADO
+# 3. MOTOR DE CÁLCULO
 # ------------------------------------------------------------------------------
 def calcular_indicadores(df):
     d = df.copy()
     d['Retorno'] = d['Close'].pct_change() * 100
-    # Media Lenta (Tendencia de fondo)
     d['Media_50'] = d['Close'].rolling(50).mean()
     d['Media_20'] = d['Close'].rolling(20).mean()
-    d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
     d['Volatilidad'] = d['Retorno'].rolling(10).std()
-    
     # RSI
     delta = d['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     d['RSI'] = 100 - (100 / (1 + (gain / loss)))
-    
     return d.dropna()
 
-def entrenar_y_predecir(df_hist, pistas):
+def entrenar_ia(df_hist):
     df = df_hist.copy()
     df['Target'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
     df = df.dropna()
-    # Usamos más árboles (200) para mayor estabilidad
-    model = RandomForestClassifier(n_estimators=200, max_depth=7, random_state=42)
+    pistas = ['Retorno', 'Volatilidad', 'RSI']
+    model = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
     model.fit(df[pistas], df['Target'])
     prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR SNIPER
+# 4. SIMULADOR CON DIAGNÓSTICO DE FILTROS
 # ------------------------------------------------------------------------------
-def ejecutar_backtest_sniper(ticker, dias=30):
-    raw_data = yf.Ticker(ticker).history(period="2y")
-    df = calcular_indicadores(raw_data)
-    pistas = ['Retorno', 'Distancia', 'Volatilidad', 'RSI']
+def ejecutar_diagnostico(ticker, dias=30):
+    df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
+    pistas = ['Retorno', 'Volatilidad', 'RSI']
     
     cap_sim = capital_total
     curva = []
-    ops = 0
-    gastos_totales = 0
+    rechazos = {"Probabilidad": 0, "Volatilidad": 0, "Tendencia": 0}
+    exitos = 0
     
     for i in range(len(df) - dias, len(df)):
         estudio = df.iloc[:i]
         hoy = df.iloc[i]
+        prob = entrenar_ia(estudio)
+        umbral_actual = umbral_base * st.session_state['performance_score']
         
-        prob = entrenar_y_predecir(estudio, pistas)
-        umbral_dinamico = umbral_base * st.session_state['performance_score']
+        # --- EL ESCÁNER DE RECHAZOS ---
+        pasa_prob = prob >= umbral_actual
+        pasa_vol = hoy['Volatilidad'] > vol_min
+        pasa_tend = (hoy['Close'] > hoy['Media_50']) if filtro_tendencia else True
         
-        # LÓGICA SNIPER:
-        # 1. Probabilidad > Umbral (62%+)
-        # 2. Volatilidad > Mínima (Hay movimiento para ganar)
-        # 3. Tendencia: Precio sobre Media 50 (No operamos contra corriente)
-        if prob >= umbral_dinamico and hoy['Volatilidad'] > volatilidad_minima and hoy['Close'] > hoy['Media_50']:
-            ops += 1
-            coste_transaccion = comision_fija * 2
-            gastos_totales += coste_transaccion
+        if pasa_prob and pasa_vol and pasa_tend:
+            exitos += 1
+            var_futura = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
+            cap_sim += (cap_sim * 0.2 * var_futura) - (comision_fija * 2)
+        else:
+            if not pasa_prob: rechazos["Probabilidad"] += 1
+            if not pasa_vol: rechazos["Volatilidad"] += 1
+            if not pasa_tend: rechazos["Tendencia"] += 1
             
-            var_mañana = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
-            # Mayor exposición (20%) pero menos veces
-            resultado = (cap_sim * 0.2) * var_mañana
-            cap_sim += (resultado - coste_transaccion)
-        
         curva.append(cap_sim)
         
-    return curva, ops, gastos_totales
+    return curva, exitos, rechazos
 
 # ------------------------------------------------------------------------------
-# 5. DASHBOARD PRINCIPAL
+# 5. DASHBOARD DE DIAGNÓSTICO
 # ------------------------------------------------------------------------------
-st.title("🎯 Portal IA: Modo Sniper (Fase 22)")
+st.title("🔬 Portal IA: Diagnóstico de Cuellos de Botella")
 
-tab1, tab2 = st.tabs(["🚀 Operativa en Vivo", "🕵️ Auditoría de Backtesting"])
+tab1, tab2 = st.tabs(["🚀 Control de Vuelo", "📊 Laboratorio de Simulación"])
 
 with tab1:
-    umbral_final = umbral_base * st.session_state['performance_score']
-    st.info(f"Filtro Sniper Activo: Umbral de Probabilidad al {umbral_final:.1f}%")
-    st.write("El sistema ahora ignora señales débiles para proteger tus 1.000 €.")
+    umbral_f = umbral_base * st.session_state['performance_score']
+    st.info(f"Filtro Sniper: Probabilidad > {umbral_f:.1f}% | Volatilidad > {vol_min}")
+    if st.sidebar.button("♻️ REINICIAR ADAPTACIÓN"):
+        st.session_state['performance_score'] = 1.0
+        st.toast("Sistema reseteado")
 
 with tab2:
-    st.subheader("Validación de Estrategia: QQQ (30 días)")
-    if st.button("🏁 Ejecutar Simulación Sniper"):
-        with st.spinner("Buscando solo oportunidades de alta probabilidad..."):
-            curva, n_ops, total_gastos = ejecutar_backtest_sniper("QQQ")
+    st.subheader("Simulación QQQ: ¿Por qué no operamos?")
+    if st.button("🏁 Iniciar Diagnóstico"):
+        with st.spinner("Analizando causas de parálisis..."):
+            curva, n_ops, logs_rechazo = ejecutar_diagnostico("QQQ")
             
             st.line_chart(curva)
-            beneficio_neto = curva[-1] - capital_total
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio_neto:.2f} €")
-            c2.metric("Operaciones", n_ops, delta=f"{n_ops - 14} vs anterior", delta_color="inverse")
-            c3.metric("Ahorro en Comisiones", f"{28.00 - total_gastos:.2f} €", delta_color="normal")
+            # Visualización de los "Tapones"
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Operaciones", n_ops)
+            c2.metric("Tapón Probabilidad", logs_rechazo["Probabilidad"], delta="Filtro IA", delta_color="inverse")
+            c3.metric("Tapón Volatilidad", logs_rechazo["Volatilidad"], delta="Mercado Lento", delta_color="inverse")
+            c4.metric("Tapón Tendencia", logs_rechazo["Tendencia"], delta="Mercado Bajista", delta_color="inverse")
             
-            if beneficio_neto > -5: # Un margen de error aceptable
-                st.success("🎯 Objetivo de reducción logrado. El sistema es ahora más eficiente.")
+            if n_ops == 0:
+                st.warning("⚠️ PARÁLISIS DETECTADA: Identifica cuál es el número más alto en los 'Tapones' y ajusta el dial en la barra lateral.")
             else:
-                st.warning("⚠️ Todavía hay ruido. Considera subir el 'Umbral de Probabilidad' a 65%.")
-
-# --- CONTROL DE ADAPTACIÓN ---
-st.sidebar.divider()
-st.sidebar.subheader("🕹️ Entrenamiento")
-if st.sidebar.button("♻️ REINICIAR SISTEMA"):
-    st.session_state['performance_score'] = 1.0
-    st.toast("Adaptación reseteada a 1.0x")
+                st.success(f"¡Sistema reactivado! Capital final: {curva[-1]:.2f} €")
