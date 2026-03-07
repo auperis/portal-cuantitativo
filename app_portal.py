@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 34: ESCÁNER DE FUERZA RELATIVA (RELATIVE STRENGTH)
-# Objetivo: Ordenar el universo de activos por la convicción de la IA para
-# mantener la vigilancia estratégica incluso en días de "Cero Operaciones".
+# ARQUITECTURA FASE 37: EL PUENTE A INVESTGLASS (GENERADOR DE ÓRDENES)
+# Objetivo: Exportar las decisiones de la IA en un formato estandarizado para
+# auditoría institucional y ejecución en sistemas de gestión de carteras.
 # ==============================================================================
 
 import streamlit as st
@@ -16,7 +16,7 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL (MODO INSTITUCIONAL)
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Fuerza Relativa", layout="wide", page_icon="🏆")
+st.set_page_config(page_title="Portal IA - Integración Órdenes", layout="wide", page_icon="🏦")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -50,10 +50,9 @@ comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
 capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
 max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0)
 
-# NUEVO: Fase 35 - El Parking Inteligente
 st.sidebar.divider()
 st.sidebar.header("💰 Gestión de Liquidez (Parking)")
-apy_liquidez = st.sidebar.slider("Fondo Monetario (APY %)", 0.0, 10.0, 3.5, help="Rendimiento anual por tener el dinero esperando sin operar.")
+apy_liquidez = st.sidebar.slider("Fondo Monetario (APY %)", 0.0, 10.0, 3.5)
 dias_simulacion = st.sidebar.selectbox("Días de Simulación Auditoría", [90, 180, 365], index=1)
 
 # ------------------------------------------------------------------------------
@@ -97,8 +96,6 @@ def entrenar_ia_radar(ticker, dias_vision):
     hoy = df.iloc[-1]
     prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
     
-    # NUEVO: FASE 36 - Auditoría de IA (Explainable AI)
-    # Extraemos el peso que la red neuronal le ha dado a cada pista hoy
     pesos = model.feature_importances_ * 100
     importancias = dict(zip(pistas, pesos))
     
@@ -131,7 +128,6 @@ def ejecutar_simulacion_parking(ticker, dias, dias_vision):
                 acciones_compradas = 0
                 precio_maximo = 0
         else:
-            # LA MAGIA DEL PARKING: Ganamos dinero solo por esperar
             interes_hoy = liquidez * rendimiento_diario
             liquidez += interes_hoy
             intereses_acumulados += interes_hoy
@@ -173,7 +169,7 @@ def enviar_alerta(mensaje):
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🏆 Portal IA: Ranking de Fuerza Relativa")
+st.title("🏦 Portal IA: Integración de Órdenes")
 
 tab1, tab2 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría"])
 
@@ -182,8 +178,6 @@ umbral_f = umbral_base + st.session_state['auto_bias']
 with tab1:
     st.markdown(f"### Muro de Inteligencia | Umbral Exigido: **{umbral_f:.1f}%**")
     
-    # CORRECCIÓN DE INTERFAZ: Se elimina type="primary" para quitar el color rojo de alerta.
-    # Ahora es un botón neutral institucional.
     if st.button("🔎 EJECUTAR ANÁLISIS DE FUERZA RELATIVA"):
         universo = []
         if escanear_indices: universo.extend([("SPY", "S&P 500"), ("QQQ", "Nasdaq"), ("IWM", "Russell 2000")])
@@ -194,6 +188,7 @@ with tab1:
             st.error("⚠️ Debes seleccionar al menos un grupo de activos.")
         else:
             resultados = []
+            log_ordenes = [] # NUEVO: Guardaremos los datos limpios para exportar
             operaciones_encontradas = 0
             barra_progreso = st.progress(0)
             
@@ -209,6 +204,9 @@ with tab1:
                         
                         estado = "🔴 DESCARTADO"
                         accion = "Liquidez"
+                        acciones = 0.0
+                        precio_stop = 0.0
+                        inversion = 0.0
                         
                         if prob >= umbral_f and vol_ok and macro_ok and rsi_ok:
                             estado = "🟢 SEÑAL CONFIRMADA"
@@ -228,10 +226,10 @@ with tab1:
                             elif not rsi_ok: accion = "RSI Sobrecomprado"
                             elif not vol_ok: accion = "Sin Volatilidad"
                             
-                        # FASE 36: Identificamos el motivo principal de la decisión
                         motivo_principal = max(pesos_ia, key=pesos_ia.get)
                         peso_motivo = pesos_ia[motivo_principal]
                             
+                        # Datos para la UI
                         resultados.append({
                             "Activo": nombre,
                             "Ticker": tick,
@@ -242,17 +240,29 @@ with tab1:
                             "RSI": f"{datos_hoy['RSI']:.1f}",
                             "Instrucción": accion
                         })
+                        
+                        # NUEVO: FASE 37 - Formato InvestGlass (Trade Log)
+                        fecha_hoy = datetime.now().strftime("%Y-%m-%d")
+                        tipo_orden = "BUY" if "CONFIRMADA" in estado else "HOLD_CASH"
+                        
+                        log_ordenes.append({
+                            "Date": fecha_hoy,
+                            "Ticker": tick,
+                            "Order_Type": tipo_orden,
+                            "Quantity_Shares": round(acciones, 4),
+                            "Allocated_Capital_EUR": round(inversion, 2),
+                            "Limit_Price_USD": round(precio, 2),
+                            "Trailing_Stop_USD": round(precio_stop, 2),
+                            "AI_Probability": round(prob, 2),
+                            "AI_Reasoning_XAI": motivo_principal
+                        })
                 
                 barra_progreso.progress((i + 1) / len(universo))
             
-            # MAGIA INSTITUCIONAL: Ordenamos los resultados de mayor a menor convicción
             df_res = pd.DataFrame(resultados)
             df_res = df_res.sort_values(by="Valor_Prob", ascending=False).reset_index(drop=True)
-            
-            # Eliminamos la columna de uso interno antes de mostrarla
             df_res_mostrar = df_res.drop(columns=['Valor_Prob'])
             
-            # Mostramos el líder indiscutible
             lider = df_res.iloc[0]
             st.info(f"🏆 **El Activo más fuerte hoy es {lider['Activo']}** con un {lider['Convicción IA']} de convicción. Su estado actual es: {lider['Estado']}.")
             
@@ -266,9 +276,25 @@ with tab1:
                 
             st.dataframe(df_res_mostrar.style.applymap(color_estado, subset=['Estado']), use_container_width=True)
             
-            if operaciones_encontradas == 0:
-                st.write("---")
-                st.warning("🛡️ **Análisis del Arquitecto:** Aunque no hay señales confirmadas de compra, el ranking superior te indica qué activos están acumulando fuerza. Vigila a los que están 'EN OBSERVACIÓN', ya que podrían dar señal verde mañana.")
+            # NUEVO: FASE 37 - Generador de archivo CSV para Exportación
+            st.divider()
+            st.subheader("🏦 Integración Institucional (Portfolio Management)")
+            
+            df_ordenes = pd.DataFrame(log_ordenes)
+            csv_data = df_ordenes.to_csv(index=False).encode('utf-8')
+            
+            if operaciones_encontradas > 0:
+                st.success(f"🎯 Se han generado {operaciones_encontradas} órdenes de ejecución. Listas para ser ingeridas por tu Broker o InvestGlass.")
+            else:
+                st.warning("🛡️ Se ha generado el archivo de auditoría, indicando explícitamente a los sistemas la orden de mantener liquidez (HOLD_CASH).")
+                
+            st.download_button(
+                label="📥 Descargar Archivo de Órdenes (InvestGlass Ready CSV)",
+                data=csv_data,
+                file_name=f"trade_log_IA_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                type="primary"
+            )
 
 with tab2:
     st.subheader("🔬 Auditoría de Memoria y Parking Inteligente")
@@ -284,9 +310,6 @@ with tab2:
             beneficio_total = curva[-1] - capital_total
             
             c_a, c_b, c_c = st.columns(3)
-            c_a.metric("Operaciones Realizadas", n_ops, help="Veces que salimos del parking para cazar una tendencia.")
+            c_a.metric("Operaciones Realizadas", n_ops)
             c_b.metric("Intereses por Esperar", f"+{int_acumulados:.2f} €", delta="Dinero 100% Pasivo")
             c_c.metric("Beneficio Neto Total", f"{beneficio_total:.2f} €", delta=f"Capital Final: {curva[-1]:.2f} €")
-            
-            if int_acumulados > 0:
-                st.success(f"✅ Has ganado **{int_acumulados:.2f} €** simplemente por tener paciencia y no forzar operaciones cuando la IA decía 'DESCARTADO'.")
