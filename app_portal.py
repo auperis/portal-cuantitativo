@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 6: INGENIERÍA DE CARACTERÍSTICAS (FEATURE ENGINEERING)
-# Objetivo: Inyectar más datos (Volatilidad, Volumen Institucional) para subir la precisión.
+# ARQUITECTURA FASE 6.1: EXPLAINABLE AI (XAI)
+# Objetivo: Auditar el cerebro de la IA para detectar qué datos son ruido.
 # ==============================================================================
 
 import streamlit as st
@@ -36,38 +36,28 @@ boton_analizar = st.sidebar.button("Ejecutar Oráculo y Simulador IA")
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     activo = yf.Ticker(ticker)
-    # Pedimos un poco más de historial (3 años) porque ahora hacemos cálculos más complejos
     return activo.history(period="3y")
 
 def calcular_indicadores(df):
     datos = df.copy()
     
-    # --- PISTAS BÁSICAS (Las que ya teníamos) ---
+    # Pistas Base
     datos['Media_20_Dias'] = datos['Close'].rolling(window=20).mean()
     datos['Distancia_a_Media_%'] = ((datos['Close'] / datos['Media_20_Dias']) - 1) * 100
     datos['Retorno_Hoy_%'] = datos['Close'].pct_change() * 100
     
-    # --- NUEVAS PISTAS INSTITUCIONALES (Feature Engineering) ---
-    
-    # Pista 1: Volatilidad a 5 días (Mide el "miedo" del mercado)
+    # Nuevas Pistas Institucionales
     datos['Volatilidad_5D'] = datos['Close'].rolling(window=5).std()
-    
-    # Pista 2: Volumen Relativo (Detecta las "Ballenas" institucionales)
-    # Comparamos el volumen de hoy con la media de los últimos 20 días
     datos['Media_Volumen_20D'] = datos['Volume'].rolling(window=20).mean()
     datos['Volumen_Relativo'] = datos['Volume'] / datos['Media_Volumen_20D']
-    
-    # Pista 3: Inercia de 3 días (Momento de corto plazo)
     datos['Retorno_3D_%'] = datos['Close'].pct_change(periods=3) * 100
     
-    # Lo que queremos predecir (Target)
+    # Target
     datos['Target_Mañana_Sube'] = np.where(datos['Close'].shift(-1) > datos['Close'], 1, 0)
     
-    # Limpiamos los días iniciales que se quedan sin datos al calcular las medias
     return datos.dropna()
 
 def entrenar_modelo(df):
-    # ¡LE DAMOS LAS NUEVAS PISTAS AL DETECTIVE (La IA)!
     columnas_pistas = [
         'Distancia_a_Media_%', 
         'Retorno_Hoy_%', 
@@ -80,14 +70,16 @@ def entrenar_modelo(df):
     datos_estudio = df.iloc[:indice_corte]
     datos_examen = df.iloc[indice_corte:]
     
-    # Hemos ajustado un poco el Cerebro (max_depth=5) para que no "memorice" en lugar de "aprender" (Overfitting)
     modelo_ia = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
     modelo_ia.fit(datos_estudio[columnas_pistas], datos_estudio['Target_Mañana_Sube'])
     
     predicciones_examen = modelo_ia.predict(datos_examen[columnas_pistas])
     precision = accuracy_score(datos_examen['Target_Mañana_Sube'], predicciones_examen) * 100
     
-    return modelo_ia, precision, columnas_pistas, datos_examen, predicciones_examen
+    # NUEVO: Extraemos la importancia matemática de cada pista (El polígrafo)
+    importancias = modelo_ia.feature_importances_ * 100
+    
+    return modelo_ia, precision, columnas_pistas, datos_examen, predicciones_examen, importancias
 
 def calcular_tamaño_posicion(capital_total, precio_accion, stop_loss_porcentaje, riesgo_maximo_porcentaje=2.0):
     riesgo_en_euros = capital_total * (riesgo_maximo_porcentaje / 100)
@@ -123,14 +115,32 @@ if boton_analizar:
             st.error("Error: Activo no encontrado.")
         else:
             datos_procesados = calcular_indicadores(datos_crudos)
-            modelo, precision_ia, pistas, datos_examen, predic_examen = entrenar_modelo(datos_procesados)
+            # Recibimos las importancias del Cerebro
+            modelo, precision_ia, pistas, datos_examen, predic_examen, importancias = entrenar_modelo(datos_procesados)
             
-            # Mostramos las pistas que está usando la IA
             st.info(f"🧠 Cerebro IA analizando {len(pistas)} variables predictivas simultáneamente.")
             st.metric(label="Precisión Histórica del Modelo (Edge)", value=f"{precision_ia:.2f}%")
             
+            # --- NUEVA ZONA: AUDITORÍA XAI ---
+            st.subheader("🔍 Auditoría de IA (Explainable AI - XAI)")
+            st.markdown("El Polígrafo: ¿Qué pistas son útiles y cuáles son puro ruido?")
+            
+            df_importancias = pd.DataFrame({'Pista': pistas, 'Importancia %': importancias})
+            df_importancias = df_importancias.sort_values(by='Importancia %', ascending=True)
+            
+            fig_xai = go.Figure(go.Bar(
+                x=df_importancias['Importancia %'],
+                y=df_importancias['Pista'],
+                orientation='h',
+                marker_color='#00d2d3' # Color cian tecnológico
+            ))
+            fig_xai.update_layout(template='plotly_dark', height=300, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Importancia en la Decisión (%)")
+            st.plotly_chart(fig_xai, use_container_width=True)
+            
+            st.markdown("---")
+            
+            # --- ZONA DEL SIMULADOR ---
             st.subheader("✈️ Simulador de Vuelo: IA vs Inversor Tradicional")
-            st.markdown(f"Simulación invirtiendo **{capital_usuario} €**.")
             
             df_simulado = ejecutar_simulador(datos_examen, predic_examen, capital_usuario)
             
@@ -138,7 +148,7 @@ if boton_analizar:
             capital_final_ia = df_simulado['Capital_Estrategia_IA'].iloc[-1]
             
             col_sim1, col_sim2 = st.columns(2)
-            col_sim1.metric("Cuenta: Inversor Tradicional (Buy & Hold)", f"{capital_final_tradicional:.2f} €")
+            col_sim1.metric("Cuenta: Inversor Tradicional", f"{capital_final_tradicional:.2f} €")
             col_sim2.metric("Cuenta: Inteligencia Cuantitativa (IA)", f"{capital_final_ia:.2f} €", 
                             delta=f"Diferencia: {(capital_final_ia - capital_final_tradicional):.2f} €")
             
@@ -152,6 +162,7 @@ if boton_analizar:
             
             st.markdown("---")
             
+            # --- ZONA DEL ORÁCULO ---
             st.subheader("Señal para Mañana (Tiempo Real)")
             datos_hoy = datos_procesados.iloc[-1:]
             prediccion_mañana = modelo.predict(datos_hoy[pistas])[0]
