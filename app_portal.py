@@ -81,7 +81,7 @@ def calcular_indicadores(df):
 
 def entrenar_ia_radar(ticker, dias_vision):
     df_raw = yf.Ticker(ticker).history(period="3y")
-    if len(df_raw) < 200: return None, None
+    if len(df_raw) < 200: return None, None, None
     
     df = calcular_indicadores(df_raw)
     df_train = df.copy()
@@ -89,14 +89,20 @@ def entrenar_ia_radar(ticker, dias_vision):
     df_train = df_train.dropna()
     
     pistas = ['Retorno', 'Volatilidad', 'RSI']
-    if len(df_train) < 50: return None, None
+    if len(df_train) < 50: return None, None, None
         
     model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42)
     model.fit(df_train[pistas], df_train['Target'])
     
     hoy = df.iloc[-1]
     prob = model.predict_proba(df[pistas].iloc[-1:]) [0][1] * 100
-    return prob, hoy
+    
+    # NUEVO: FASE 36 - Auditoría de IA (Explainable AI)
+    # Extraemos el peso que la red neuronal le ha dado a cada pista hoy
+    pesos = model.feature_importances_ * 100
+    importancias = dict(zip(pistas, pesos))
+    
+    return prob, hoy, importancias
 
 def ejecutar_simulacion_parking(ticker, dias, dias_vision):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
@@ -193,7 +199,7 @@ with tab1:
             
             for i, (tick, nombre) in enumerate(universo):
                 with st.spinner(f"Midiendo fuerza relativa de {nombre} ({tick})..."):
-                    prob, datos_hoy = entrenar_ia_radar(tick, dias_vision_ia)
+                    prob, datos_hoy, pesos_ia = entrenar_ia_radar(tick, dias_vision_ia)
                     
                     if prob is not None:
                         precio = datos_hoy['Close']
@@ -222,12 +228,16 @@ with tab1:
                             elif not rsi_ok: accion = "RSI Sobrecomprado"
                             elif not vol_ok: accion = "Sin Volatilidad"
                             
+                        # FASE 36: Identificamos el motivo principal de la decisión
+                        motivo_principal = max(pesos_ia, key=pesos_ia.get)
+                        peso_motivo = pesos_ia[motivo_principal]
+                            
                         resultados.append({
                             "Activo": nombre,
                             "Ticker": tick,
-                            # Guardamos la probabilidad como número para poder ordenar la tabla matemáticamente
                             "Valor_Prob": prob, 
                             "Convicción IA": f"{prob:.1f}%",
+                            "Motor de Decisión (XAI)": f"{motivo_principal} ({peso_motivo:.1f}%)",
                             "Estado": estado,
                             "RSI": f"{datos_hoy['RSI']:.1f}",
                             "Instrucción": accion
