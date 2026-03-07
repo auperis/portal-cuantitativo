@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 13: PORTAL INSTITUCIONAL INTEGRADO (SMART REBALANCING)
-# Objetivo: Radar IA + Ejecución Fraccionada + Memoria Cloud + Auditoría + Pesos
+# ARQUITECTURA FASE 12.5: ESTABILIZACIÓN Y MODO LOCAL
+# Objetivo: Que el sistema funcione SIEMPRE, con o sin conexión a la nube.
 # ==============================================================================
 
 import streamlit as st
@@ -8,135 +8,117 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
 from datetime import datetime
-import json
 import os
+import json
 
-# --- CONEXIÓN SATELITAL (PROTOCOLO ROBUSTO V8) ---
+# Intentamos cargar la librería de la nube, pero si no está, no bloqueamos al usuario
 try:
     from google.cloud import firestore as google_firestore
     from firebase_admin import initialize_app, _apps
-    HAS_FIREBASE = True
+    HAS_CLOUD_CAPABILITY = True
 except ImportError:
-    HAS_FIREBASE = False
+    HAS_CLOUD_CAPABILITY = False
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN E INICIALIZACIÓN DE LA NUBE
+# 1. CONFIGURACIÓN DE LA INTERFAZ
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="Portal de Inversión IA", layout="wide", page_icon="🛡️")
 
-# Detección de identidad automática (Inyectada por el entorno)
-app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
+# Inicializamos una memoria temporal (solo dura mientras la pestaña esté abierta)
+if 'memoria_temporal' not in st.session_state:
+    st.session_state['memoria_temporal'] = []
+
+# ------------------------------------------------------------------------------
+# 2. BARRA LATERAL (EL CENTRO DE CONTROL)
+# ------------------------------------------------------------------------------
+st.sidebar.header("📡 Conexión al Sistema")
+
+# Recuperamos configuración si existe en el entorno
 firebase_config_raw = os.environ.get('__firebase_config')
-
 detected_id = None
 if firebase_config_raw:
     try:
         detected_id = json.loads(firebase_config_raw).get('projectId')
     except: pass
 
-# --- BARRA LATERAL: ESTADO DE LA RED ---
-st.sidebar.header("📡 Estado de la Red")
-project_id_manual = st.sidebar.text_input(
-    "Project ID (Manual)", 
+# CUADRO DE TEXTO CLAVE: Aquí es donde pegas el ID cuando lo tengas
+project_id = st.sidebar.text_input(
+    "Project ID (Opcional)", 
     value=detected_id if detected_id else "",
-    help="Pega aquí el ID de tu proyecto Firebase si el radar no lo detecta solo."
+    placeholder="ej: portal-ia-12345",
+    help="Si lo dejas vacío, el sistema funcionará en modo local (sin memoria histórica)."
 )
 
 db = None
-if HAS_FIREBASE and project_id_manual and len(project_id_manual) > 4:
+MODO_NUBE = False
+
+# Intentamos sintonizar el satélite solo si hay un ID válido
+if HAS_CLOUD_CAPABILITY and project_id and len(project_id) > 5:
     try:
-        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id_manual
-        db = google_firestore.Client(project=project_id_manual)
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
+        db = google_firestore.Client(project=project_id)
         if not _apps:
-            initialize_app(options={'projectId': project_id_manual})
-        st.sidebar.success(f"✅ Satélite Sintonizado")
+            initialize_app(options={'projectId': project_id})
+        st.sidebar.success("✅ Modo Satélite Activo")
+        MODO_NUBE = True
     except Exception as e:
-        st.sidebar.error(f"⚠️ Error de Enlace: {e}")
+        st.sidebar.warning(f"⚠️ Usando Modo Local (Error: {e})")
 else:
-    st.sidebar.warning("🏠 Modo Local Activo (Sin Nube)")
+    st.sidebar.info("🏠 Modo Local Activo")
 
-# ------------------------------------------------------------------------------
-# 2. PANEL DE CONTROL DE RIESGO (Cartera 1.000 €)
-# ------------------------------------------------------------------------------
+st.sidebar.divider()
 st.sidebar.header("📈 Configuración del Radar")
-tickers_input = st.sidebar.text_input("Activos a vigilar", value="SPY, GLD, QQQ, TLT, BTC-USD")
+activos_lista = st.sidebar.text_input("Activos (separados por coma)", value="SPY, QQQ, BTC-USD, GLD")
+capital_total = st.sidebar.number_input("Capital Total (€)", value=1000)
+stop_loss_pct = st.sidebar.slider("Stop-Loss (%)", 1.0, 10.0, 5.0)
 
-st.sidebar.header("🛡️ Gestión de Riesgo")
-capital_total = st.sidebar.number_input("Capital Total (€)", min_value=100, value=1000)
-stop_loss_usuario = st.sidebar.slider("Stop-Loss (Paracaídas %)", 1.0, 15.0, 5.0, 0.5)
-umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", 50, 80, 58)
-
-boton_analizar = st.sidebar.button("Activar Radar y Smart Rebalancing")
+boton_ejecutar = st.sidebar.button("🚀 Activar Radar IA")
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR LÓGICO IA
+# 3. MOTOR IA Y CÁLCULOS
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
-    return yf.Ticker(ticker).history(period="3y")
+    return yf.Ticker(ticker).history(period="2y")
 
 def calcular_indicadores(df):
     d = df.copy()
     d['Retorno_Hoy'] = d['Close'].pct_change() * 100
-    d['Volatilidad_5D'] = d['Close'].rolling(5).std()
     d['Media_20'] = d['Close'].rolling(20).mean()
-    d['Distancia_Media'] = ((d['Close'] / d['Media_20']) - 1) * 100
-    # Objetivo: ¿Mañana cierra más alto que hoy?
-    d['Target'] = np.where(d['Close'].shift(-1) > d['Close'], 1, 0)
+    d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
+    d['Sube_Mañana'] = np.where(d['Close'].shift(-1) > d['Close'], 1, 0)
     return d.dropna()
 
-def entrenar_ia(df):
-    pistas = ['Retorno_Hoy', 'Volatilidad_5D', 'Distancia_Media']
+def entrenar_cerebro(df):
+    features = ['Retorno_Hoy', 'Distancia']
     corte = int(len(df) * 0.8)
     train = df.iloc[:corte]
-    modelo = RandomForestClassifier(n_estimators=100, max_depth=5, random_state=42)
-    modelo.fit(train[pistas], train['Target'])
-    return modelo, pistas
-
-# --- GESTIÓN DE MEMORIA Y AUDITORÍA ---
-def guardar_en_nube(datos):
-    if db:
-        try:
-            db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').document().set(datos)
-        except: pass
-
-def obtener_hit_rate_real():
-    if not db: return 0.52 # Valor base si no hay nube
-    try:
-        docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(10).stream()
-        registros = [doc.to_dict() for doc in docs]
-        if not registros: return 0.52
-        
-        aciertos = 0
-        for reg in registros:
-            info = yf.Ticker(reg['Activo']).history(period="2d")
-            if len(info) >= 2:
-                subio_real = 1 if info['Close'].iloc[-1] > reg['Precio ($)'] else 0
-                if subio_real == (1 if reg['Convicción (%)'] >= 50 else 0):
-                    aciertos += 1
-        return aciertos / len(registros)
-    except: return 0.52
+    model = RandomForestClassifier(n_estimators=50, random_state=42)
+    model.fit(train[features], train['Sube_Mañana'])
+    return model, features
 
 # ------------------------------------------------------------------------------
-# 4. INTERFAZ VISUAL (DASHBOARD)
+# 4. INTERFAZ PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🤖 Portal IA: Gestión Cuantitativa de Capital")
+st.title("🤖 Portal Cuantitativo IA (Cartera 1.000 €)")
 
-t1, t2 = st.tabs(["🎯 Radar y Rebalanceo", "📊 Auditoría de la IA"])
+tab1, tab2 = st.tabs(["🎯 Radar de Hoy", "📊 Historial / Auditoría"])
 
-with t1:
-    if boton_analizar:
-        activos = [x.strip().upper() for x in tickers_input.split(',')]
+with tab1:
+    if boton_ejecutar:
+        activos = [x.strip().upper() for x in activos_lista.split(',')]
         resultados = []
-        prog = st.progress(0)
+        progreso = st.progress(0)
         
         for i, tick in enumerate(activos):
             try:
+                # 1. Ingesta y Procesamiento
                 df = calcular_indicadores(obtener_datos(tick))
-                mod, pists = entrenar_ia(df)
+                model, feat = entrenar_cerebro(df)
+                
+                # 2. Predicción para Mañana
                 hoy = df.iloc[-1:]
-                prob = mod.predict_proba(hoy[pists])[0][1] * 100
+                prob = model.predict_proba(hoy[feat])[0][1] * 100
                 
                 res = {
                     "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
@@ -145,54 +127,41 @@ with t1:
                     "Precio ($)": round(hoy['Close'].values[0], 2)
                 }
                 resultados.append(res)
-                guardar_en_nube(res)
+                
+                # 3. Guardado (Nube o Local)
+                if MODO_NUBE and db:
+                    app_id_env = os.environ.get('__app_id', 'default')
+                    db.collection('artifacts').document(app_id_env).collection('public').document('data').collection('predicciones').document().set(res)
+                
+                st.session_state['memoria_temporal'].append(res)
+                
             except: pass
-            prog.progress((i + 1) / len(activos))
+            progreso.progress((i + 1) / len(activos))
 
         if resultados:
-            df_res = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
+            df_final = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
+            st.subheader("🏆 Ranking de Oportunidades")
+            st.dataframe(df_final.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
             
-            # --- SECCIÓN DE REBALANCEO INTELIGENTE ---
-            st.subheader("⚖️ Propuesta de Smart Rebalancing")
+            ganador = df_final.iloc[0]
+            st.success(f"👑 Señal Ganadora: {ganador['Activo']} con {ganador['Convicción (%)']}% de probabilidad.")
             
-            ganadores = df_res[df_res["Convicción (%)"] >= umbral_conviccion]
+            # Gestión de Riesgo (Fase 10)
+            riesgo_eur = capital_total * 0.02 # Arriesgamos solo 20€
+            coste_stop = ganador['Precio ($)'] * (stop_loss_usuario / 100 if 'stop_loss_usuario' in locals() else stop_loss_pct / 100)
+            acciones = riesgo_eur / coste_stop
             
-            if not ganadores.empty:
-                hr = obtener_hit_rate_real()
-                st.info(f"Auditoría activa: Hit Rate reciente del {hr*100:.1f}%.")
-                
-                # Freno de seguridad: si fallamos mucho, arriesgamos menos
-                riesgo_total_permitido = 0.02 if hr >= 0.45 else 0.01 # 2% o 1%
-                capital_riesgo_eur = capital_total * riesgo_total_permitido
-                
-                # Reparto proporcional (Pesos)
-                suma_conv = ganadores["Convicción (%)"].sum()
-                ganadores["Peso (%)"] = (ganadores["Convicción (%)"] / suma_conv) * 100
-                
-                # Cálculo de Inversión y Fracciones
-                # Inversión = (Capital Riesgo * Peso) / (Stop Loss %)
-                ganadores["Inversión (€)"] = (ganadores["Peso (%)"] / 100) * (capital_riesgo_eur / (stop_loss_usuario / 100))
-                ganadores["Acciones"] = ganadores["Inversión (€)"] / ganadores["Precio ($)"]
-                
-                st.dataframe(
-                    ganadores[["Activo", "Convicción (%)", "Peso (%)", "Inversión (€)", "Acciones"]].style.background_gradient(cmap='Greens'), 
-                    use_container_width=True
-                )
-                
-                total_invertido = ganadores["Inversión (€)"].sum()
-                st.success(f"🚀 Instrucción: Distribuir {total_invertido:.2f} € entre {len(ganadores)} activos.")
-                st.caption(f"Riesgo máximo de esta cartera: {capital_riesgo_eur:.2f} € (Capital Protegido).")
-            else:
-                st.error(f"Ningún activo supera el {umbral_conviccion}%. Se recomienda 100% liquidez.")
+            col1, col2 = st.columns(2)
+            col1.metric("Acciones (Fraccionadas)", f"{acciones:.4f}")
+            col2.metric("Inversión Sugerida", f"{acciones * ganador['Precio ($)']:.2f} €")
+            st.info(f"Riesgo Máximo de la operación: {riesgo_eur} €.")
 
-with t2:
-    st.subheader("🌐 Marcador de Aciertos (Caja Negra)")
-    if db:
-        docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(10).stream()
-        registros = [d.to_dict() for d in docs]
-        if registros:
-            st.table(pd.DataFrame(registros))
-        else:
-            st.info("Analiza activos para empezar a grabar el historial.")
+with tab2:
+    st.subheader("📓 Historial de Predicciones")
+    if st.session_state['memoria_temporal']:
+        df_hist = pd.DataFrame(st.session_state['memoria_temporal'])
+        st.table(df_hist.tail(10))
+        if not MODO_NUBE:
+            st.warning("⚠️ Nota: Estás en Modo Local. Este historial se borrará si cierras la pestaña.")
     else:
-        st.warning("⚠️ Conecta el Project ID para ver el historial permanente.")
+        st.info("Activa el radar en la pestaña anterior para ver datos aquí.")
