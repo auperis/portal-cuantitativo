@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (VERSIÓN V6): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Evitar el error de Project ID usando el cliente directo de Google Cloud.
+# ARQUITECTURA FASE 11 (VERSIÓN V7): PERSISTENCIA TOTAL + UI PREMIUM
+# Objetivo: Inyección explícita del Project ID para eliminar el ValueError.
 # ==============================================================================
 
 import streamlit as st
@@ -16,42 +16,44 @@ import json
 import os
 
 # --- CONEXIÓN SATELITAL (DIRECTA A GOOGLE CLOUD) ---
-# Importamos el cliente directo para evitar fallos de 'firebase-admin'
 from google.cloud import firestore as google_firestore
 from firebase_admin import initialize_app, _apps
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (LA FIRMA DIRECTA)
+# 1. INICIALIZACIÓN DE LA NUBE (LA LLAVE MAESTRA)
 # ------------------------------------------------------------------------------
 st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
 
-# Extraemos la configuración del entorno
+# 1.1. Extracción de credenciales del entorno
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
-firebase_config_str = os.environ.get('__firebase_config')
+firebase_config_raw = os.environ.get('__firebase_config')
 
+# 1.2. Parseo de seguridad del Project ID
 project_id = None
-if firebase_config_str:
+if firebase_config_raw:
     try:
-        config_dict = json.loads(firebase_config_str)
+        config_dict = json.loads(firebase_config_raw)
         project_id = config_dict.get('projectId')
-    except:
-        pass
+    except Exception as e:
+        st.sidebar.error(f"Error parseando config: {e}")
 
-# Inicializamos el envoltorio Firebase solo para mantener el ecosistema
-if not _apps:
-    try:
-        initialize_app()
-    except:
-        pass
-
-# CONEXIÓN DIRECTA: Llamamos al Jefe de Almacén entregándole el ID del proyecto
+# 1.3. Inicialización del cliente con ID EXPLÍCITO
+# Usamos google.cloud.firestore.Client directamente para mayor control
 try:
     if project_id:
-        # Aquí es donde forzamos la conexión con el ID explícito
+        # Forzamos el ID en el sistema y en el cliente
+        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
         db = google_firestore.Client(project=project_id)
+        
+        # Inicializamos el entorno Firebase si no existe
+        if not _apps:
+            initialize_app(options={'projectId': project_id})
+            
+        st.sidebar.success(f"📡 Conectado a: {project_id}")
     else:
-        # Fallback si no hay ID disponible
+        # Fallback por si las variables de entorno no están listas
         db = google_firestore.Client()
+        st.sidebar.warning("⚠️ Usando ID por defecto (Posible fallo)")
 except Exception as e:
     st.error(f"Error crítico en la conexión directa: {e}")
     db = None
@@ -111,12 +113,12 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
     if (acc * precio) > capital: acc = capital / precio
     return acc, (acc * precio), perdida_max_euros
 
-# --- PERSISTENCIA (FIRESTORE DIRECTO) ---
+# --- PERSISTENCIA (FIRESTORE) ---
 def guardar_en_nube(data_list):
     if db is None: return
     for item in data_list:
         try:
-            # Ruta oficial: artifacts/{appId}/public/data/{collection}
+            # Ruta oficial requerida para permisos de escritura
             db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').document().set(item)
         except Exception as e:
             pass
@@ -124,7 +126,6 @@ def guardar_en_nube(data_list):
 def cargar_de_nube():
     if db is None: return []
     try:
-        # Recuperamos el historial
         docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(10).stream()
         return [doc.to_dict() for doc in docs]
     except:
@@ -182,7 +183,7 @@ if boton_analizar:
             st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Riesgo bloqueado.")
             st.toast("✅ Sincronización con la nube completada.")
         else:
-            st.error("Ningún activo supera el umbral. Liquidez al 100%.")
+            st.error("Convicción insuficiente. Mantenemos liquidez.")
 
 st.markdown("---")
 st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
@@ -192,4 +193,4 @@ if historial_nube:
     df_cloud = pd.DataFrame(historial_nube)
     st.table(df_cloud.head(10))
 else:
-    st.caption("No hay registros en la nube. Inicia un análisis para comenzar el historial.")
+    st.caption("No se detectan registros históricos en la nube. Inicia un análisis para comenzar el historial.")
