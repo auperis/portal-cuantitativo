@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 25.1: AGENTE DE AUTO-CORRECCIÓN (CORRECCIÓN DE NOMBRE)
-# Objetivo: Corregir el NameError al llamar a la función de simulación.
+# ARQUITECTURA FASE 26: OPTIMIZADOR DE EXPOSICIÓN (DYNAMIC EXPOSURE)
+# Objetivo: Ajustar el tamaño de la apuesta basándose en la fuerza de la señal.
 # ==============================================================================
 
 import streamlit as st
@@ -15,11 +15,10 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Auto-Corrección", layout="wide", page_icon="🤖")
+st.set_page_config(page_title="Portal IA - Exposición Dinámica", layout="wide", page_icon="⚖️")
 
-# Memoria de rendimiento autónomo
 if 'auto_bias' not in st.session_state:
-    st.session_state['auto_bias'] = 0.0 # Ajuste automático del umbral
+    st.session_state['auto_bias'] = 0.0
 
 # ------------------------------------------------------------------------------
 # 2. BARRA LATERAL: AJUSTES ADN
@@ -32,9 +31,9 @@ token_input = st.sidebar.text_input("Bot Token", value=TOKEN_ARQUITECTO, type="p
 chat_id_input = st.sidebar.text_input("Chat ID", value=CHAT_ID_ARQUITECTO)
 
 st.sidebar.divider()
-st.sidebar.header("⚖️ Diales de Tolerancia")
+st.sidebar.header("⚖️ Diales de Precisión")
 umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 75.0, 58.0)
-margen_tendencia = st.sidebar.slider("Margen de Tendencia (%)", 0.0, 5.0, 1.5)
+max_exposicion = st.sidebar.slider("Exposición Máxima (%)", 5.0, 40.0, 25.0, help="Máximo capital a arriesgar en una sola operación.")
 
 st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
@@ -66,15 +65,14 @@ def entrenar_ia(df_hist):
     return prob
 
 # ------------------------------------------------------------------------------
-# 4. SIMULADOR CON AUTO-CORRECCIÓN
+# 4. SIMULADOR CON EXPOSICIÓN DINÁMICA
 # ------------------------------------------------------------------------------
-def ejecutar_simulacion_autonoma(ticker, dias=30):
+def ejecutar_simulacion_exposicion(ticker, dias=30):
     df = calcular_indicadores(yf.Ticker(ticker).history(period="2y"))
     cap_sim = capital_total
     curva = []
     ops = 0
     
-    # El umbral ahora incluye el "Sesgo Automático" del sistema
     umbral_final = umbral_base + st.session_state['auto_bias']
     
     for i in range(len(df) - dias, len(df)):
@@ -82,54 +80,56 @@ def ejecutar_simulacion_autonoma(ticker, dias=30):
         hoy = df.iloc[i]
         prob = entrenar_ia(estudio)
         
-        pasa_prob = prob >= umbral_final
-        limite_inf = hoy['Media_50'] * (1 - (margen_tendencia / 100))
-        pasa_tend = hoy['Close'] >= limite_inf
-        
-        if pasa_prob and pasa_tend and hoy['Volatilidad'] > 0.5:
+        if prob >= umbral_final and hoy['Volatilidad'] > 0.5:
             ops += 1
+            # ESCALADO DINÁMICO: 
+            # Si prob es umbral_final -> exp = 5%
+            # Si prob es 100% -> exp = max_exposicion
+            rango_prob = 100 - umbral_final
+            exceso_prob = prob - umbral_final
+            factor_esfuerzo = exceso_prob / rango_prob
+            exposicion_real = 0.05 + (factor_esfuerzo * (max_exposicion/100 - 0.05))
+            
             var_futura = (df.iloc[i+1]['Close'] / hoy['Close']) - 1 if i+1 < len(df) else 0
-            cap_sim += (cap_sim * 0.2 * var_futura) - (comision_fija * 2)
+            beneficio_op = (cap_sim * exposicion_real * var_futura) - (comision_fija * 2)
+            cap_sim += beneficio_op
             
         curva.append(cap_sim)
     
     return curva, ops, umbral_final
 
 # ------------------------------------------------------------------------------
-# 5. DASHBOARD
+# 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🤖 Portal IA: Agente de Auto-Corrección")
+st.title("⚖️ Portal IA: Optimizador de Exposición")
 
-col1, col2 = st.columns([2, 1])
+c1, c2, c3 = st.columns(3)
+umbral_f = umbral_base + st.session_state['auto_bias']
 
-with col1:
-    st.subheader("Simulación y Aprendizaje")
-    # CORRECCIÓN: Se cambió 'ejecutar_autonoma' por 'ejecutar_simulacion_autonoma'
-    if st.button("🏁 Ejecutar Simulación y Auto-Corregir"):
-        with st.spinner("Simulando y ajustando redes neuronales..."):
-            curva, n_ops, u_final = ejecutar_simulacion_autonoma("QQQ")
-            st.line_chart(curva)
-            
-            beneficio = curva[-1] - capital_total
-            
-            # --- LÓGICA DE AUTO-CORRECCIÓN ---
-            if beneficio < 0 and n_ops > 3:
-                # Si perdemos dinero operando mucho, subimos la exigencia
-                st.session_state['auto_bias'] += 2.0
-                st.warning(f"⚠️ Rendimiento negativo. El Agente ha subido el umbral a {u_final + 2.0:.1f}% para filtrar el ruido.")
-            elif beneficio > 10:
-                # Si ganamos bien, podemos permitirnos ser un poco más flexibles
-                st.session_state['auto_bias'] -= 1.0
-                st.success(f"✅ Rendimiento positivo. El Agente ha bajado el umbral a {u_final - 1.0:.1f}% para capturar más señales.")
-
-with col2:
-    st.metric("Sesgo de Auto-Corrección", f"+{st.session_state['auto_bias']}%")
-    st.info(f"Este valor se suma a tu umbral base para protegerte del overtrading.")
-    if st.button("♻️ Resetear IA"):
+with c1:
+    st.metric("Umbral de Seguridad", f"{umbral_f:.1f}%", f"+{st.session_state['auto_bias']}% IA Bias")
+with c2:
+    st.metric("Capital en Riesgo", f"{capital_total} €")
+with c3:
+    if st.button("♻️ Reiniciar Aprendizaje"):
         st.session_state['auto_bias'] = 0.0
         st.rerun()
 
-# Espacio para el Radar real
 st.divider()
-st.subheader("📡 Radar de Ejecución en Vivo")
-st.write("Pulsa el botón de simulación primero para que la IA se ajuste al mercado actual.")
+
+if st.button("🏁 Iniciar Simulación con Escalado"):
+    with st.spinner("Calculando tamaños de apuesta dinámicos..."):
+        curva, n_ops, u_final = ejecutar_simulacion_exposicion("QQQ")
+        st.line_chart(curva)
+        
+        beneficio = curva[-1] - capital_total
+        
+        # AUTO-CORRECCIÓN ACTUALIZADA
+        if beneficio < 0 and n_ops > 2:
+            st.session_state['auto_bias'] += 1.5
+            st.error(f"Pérdida detectada. La IA se vuelve más conservadora (+1.5% al umbral).")
+        elif beneficio > 5:
+            st.session_state['auto_bias'] = max(-5.0, st.session_state['auto_bias'] - 0.5)
+            st.success(f"Beneficio detectado. La IA confía más en su estrategia (-0.5% al umbral).")
+
+        st.write(f"**Análisis:** Se realizaron {n_ops} operaciones con un beneficio neto de {beneficio:.2f} €.")
