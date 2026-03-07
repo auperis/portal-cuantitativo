@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 14: AGENTE DE NOTIFICACIONES (TELEGRAM BOT)
-# Objetivo: Enviar alertas en tiempo real al móvil cuando la IA detecta señales.
+# ARQUITECTURA FASE 14.3: DIAGNÓSTICO DE COMUNICACIONES Y BOT DETECTOR
+# Objetivo: Forzar la aparición del botón de prueba e identificar el Bot ADN.
 # ==============================================================================
 
 import streamlit as st
@@ -10,144 +10,133 @@ import numpy as np
 import requests
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
-import json
 import os
 
-# --- CONEXIÓN SATELITAL (PROTOCOLO HÍBRIDO) ---
-try:
-    from google.cloud import firestore as google_firestore
-    from firebase_admin import initialize_app, _apps
-    HAS_CLOUD = True
-except ImportError:
-    HAS_CLOUD = False
+# ------------------------------------------------------------------------------
+# 1. CONFIGURACIÓN VISUAL DEL PORTAL
+# ------------------------------------------------------------------------------
+st.set_page_config(page_title="Portal IA - Torre de Control", layout="wide", page_icon="📡")
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN E INICIALIZACIÓN
+# 2. BARRA LATERAL: EL CEREBRO DE CONEXIONES
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
+st.sidebar.header("📡 Conexión de Mensajería")
 
-# Detección de identidad automática
-app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
-firebase_config_raw = os.environ.get('__firebase_config')
-detected_id = None
-if firebase_config_raw:
+# Credenciales fijas del Arquitecto (ADN del Sistema)
+TOKEN_FIJO = "8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA"
+CHAT_ID_FIJO = "1063578190"
+
+token_input = st.sidebar.text_input("Bot Token (ADN)", value=TOKEN_FIJO, type="password")
+chat_id_input = st.sidebar.text_input("Chat ID (Tu Dirección)", value=CHAT_ID_FIJO)
+
+# --- DETECTOR AUTOMÁTICO DE IDENTIDAD DEL BOT ---
+def detectar_bot(token):
+    if not token: return None
     try:
-        config_dict = json.loads(firebase_config_raw)
-        detected_id = config_dict.get('projectId')
-    except: pass
+        url = f"https://api.telegram.org/bot{token}/getMe"
+        r = requests.get(url).json()
+        if r.get("ok"):
+            return r["result"]["first_name"], r["result"]["username"]
+    except:
+        pass
+    return None
 
-# ------------------------------------------------------------------------------
-# 2. BARRA LATERAL: CENTRO DE COMUNICACIONES
-# ------------------------------------------------------------------------------
-st.sidebar.header("📡 Conexión y Alertas")
+identidad = detectar_bot(token_input)
 
-# Configuración de Nube (Opcional)
-project_id_manual = st.sidebar.text_input("Project ID (Nube)", value=detected_id if detected_id else "")
-db = None
-if HAS_CLOUD and project_id_manual:
-    try:
-        os.environ["GOOGLE_CLOUD_PROJECT"] = project_id_manual
-        db = google_firestore.Client(project=project_id_manual)
-        if not _apps: initialize_app(options={'projectId': project_id_manual})
-        st.sidebar.success("✅ Nube Conectada")
-    except: st.sidebar.warning("🏠 Modo Local Activo")
+if identidad:
+    nombre_bot, usuario_bot = identidad
+    st.sidebar.success(f"🤖 Bot Identificado: **{nombre_bot}** (@{usuario_bot})")
+else:
+    st.sidebar.error("❌ No se detecta ningún Bot con ese Token.")
 
 st.sidebar.divider()
 
-# CONFIGURACIÓN DEL MENSAJERO (TELEGRAM) - ¡ESTO ES LO QUE BUSCABA!
-st.sidebar.subheader("🤖 Configurar Bot Telegram")
-tel_token = st.sidebar.text_input("Bot Token", type="password", help="Pega aquí el Token de @BotFather")
-tel_chat_id = st.sidebar.text_input("Chat ID", help="Pega aquí tu ID de @userinfobot")
-activar_alertas = st.sidebar.checkbox("Activar Alertas al Móvil", value=False)
+# --- BOTÓN AZUL DE PRUEBA (EL DIAGNÓSTICO) ---
+st.sidebar.subheader("🛠️ Diagnóstico de Enlace")
+mensaje_test = "🔔 *SISTEMA IA ONLINE*\nArquitecto, este es un mensaje de prueba. Si lees esto, el puente de mando está operativo."
 
-# ------------------------------------------------------------------------------
-# 3. MOTOR DE NOTIFICACIONES
-# ------------------------------------------------------------------------------
-def enviar_alerta_telegram(mensaje):
-    if not tel_token or not tel_chat_id:
-        return
-    url = f"https://api.telegram.org/bot{tel_token}/sendMessage"
-    payload = {"chat_id": tel_chat_id, "text": mensaje, "parse_mode": "Markdown"}
+if st.sidebar.button("🔵 ENVIAR MENSAJE DE PRUEBA"):
+    url_send = f"https://api.telegram.org/bot{token_input}/sendMessage"
+    payload = {"chat_id": chat_id_input, "text": mensaje_test, "parse_mode": "Markdown"}
     try:
-        requests.post(url, json=payload)
+        res = requests.post(url_send, json=payload)
+        if res.status_code == 200:
+            st.sidebar.success("✅ ¡Mensaje enviado! Revisa tu Telegram.")
+        else:
+            st.sidebar.error(f"❌ Error de entrega (Código {res.status_code})")
+            st.sidebar.info("Asegúrate de haber pulsado 'INICIAR' en el chat del Bot.")
     except Exception as e:
-        st.error(f"Error al enviar alerta: {e}")
+        st.sidebar.error(f"Fallo de conexión: {e}")
 
 # ------------------------------------------------------------------------------
-# 4. MOTOR LÓGICO IA Y RIESGO
+# 3. CONFIGURACIÓN DE CARTERA (1.000 €)
 # ------------------------------------------------------------------------------
-def obtener_datos(ticker):
-    return yf.Ticker(ticker).history(period="2y")
-
-def calcular_indicadores(df):
-    d = df.copy()
-    d['Retorno'] = d['Close'].pct_change() * 100
-    d['Media_20'] = d['Close'].rolling(20).mean()
-    d['Distancia'] = ((d['Close'] / d['Media_20']) - 1) * 100
-    d['Target'] = np.where(d['Close'].shift(-1) > d['Close'], 1, 0)
-    return d.dropna()
-
-def entrenar_ia(df):
-    feat = ['Retorno', 'Distancia']
-    train = df.iloc[:int(len(df)*0.8)]
-    modelo = RandomForestClassifier(n_estimators=100, random_state=42)
-    modelo.fit(train[feat], train['Target'])
-    return modelo, feat
-
-# ------------------------------------------------------------------------------
-# 5. INTERFAZ Y REBALANCEO
-# ------------------------------------------------------------------------------
-st.title("🤖 Portal IA: Gestión Cuantitativa")
-
+st.sidebar.divider()
 st.sidebar.header("🛡️ Gestión de Riesgo")
-capital_total = st.sidebar.number_input("Capital (€)", value=1000)
-umbral_conv = st.sidebar.slider("Umbral Convicción (%)", 50, 80, 65)
+capital_total = st.sidebar.number_input("Capital en Gestión (€)", value=1000)
+activar_alertas = st.sidebar.checkbox("Activar Alertas de Trading", value=True)
 
-if st.sidebar.button("Activar Radar y Notificar"):
-    tickers = ["SPY", "QQQ", "GLD", "BTC-USD", "TLT"]
+# ------------------------------------------------------------------------------
+# 4. MOTOR LÓGICO IA (RADAR)
+# ------------------------------------------------------------------------------
+def ejecutar_radar():
+    activos = ["SPY", "QQQ", "BTC-USD", "GLD"]
     resultados = []
     
-    progreso = st.progress(0)
-    for i, tick in enumerate(tickers):
+    for tick in activos:
         try:
-            df = calcular_indicadores(obtener_datos(tick))
-            mod, feat = entrenar_ia(df)
-            prob = mod.predict_proba(df.iloc[-1:][feat])[0][1] * 100
+            # Ingesta de datos
+            df = yf.Ticker(tick).history(period="1y")
+            df['Retorno'] = df['Close'].pct_change()
+            df['Sube'] = np.where(df['Close'].shift(-1) > df['Close'], 1, 0)
+            df = df.dropna()
+            
+            # Entrenamiento rápido
+            model = RandomForestClassifier(n_estimators=50, random_state=42)
+            model.fit(df[['Retorno']], df['Sube'])
+            
+            # Predicción
+            prob = model.predict_proba(df[['Retorno']].iloc[-1:]) [0][1] * 100
             precio = df['Close'].iloc[-1]
+            
             resultados.append({
                 "Activo": tick,
                 "Convicción (%)": round(prob, 2),
                 "Precio ($)": round(precio, 2)
             })
-        except: pass
-        progreso.progress((i + 1) / len(tickers))
-    
-    if resultados:
-        df_res = pd.DataFrame(resultados).sort_values("Convicción (%)", ascending=False)
-        st.subheader("🏆 Ranking de Hoy")
-        st.dataframe(df_res.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
+        except:
+            pass
+    return resultados
+
+# ------------------------------------------------------------------------------
+# 5. PANEL DE CONTROL PRINCIPAL
+# ------------------------------------------------------------------------------
+st.title("🤖 Portal Cuantitativo IA")
+st.markdown("### Auditoría de Comunicaciones e Inversión")
+
+if st.button("🚀 Iniciar Escaneo de Mercado"):
+    with st.spinner("Analizando convergencias algorítmicas..."):
+        data_ia = ejecutar_radar()
         
-        ganador = df_res.iloc[0]
-        if ganador["Convicción (%)"] >= umbral_conv:
-            st.success(f"👑 SEÑAL GANADORA: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
+        if data_ia:
+            df_final = pd.DataFrame(data_ia).sort_values("Convicción (%)", ascending=False)
+            st.table(df_final)
             
-            # Cálculo de fracciones para 1.000€
-            riesgo_eur = capital_total * 0.02 # Riesgo 20€
-            stop_loss_eur = ganador['Precio ($)'] * 0.05 # 5% SL
-            acciones = riesgo_eur / stop_loss_eur
+            ganador = df_final.iloc[0]
+            st.subheader(f"🎯 Oportunidad Detectada: {ganador['Activo']}")
             
-            reporte = (
-                f"🚀 *ALERTA PORTAL IA*\n\n"
+            # Instrucción de compra (2% de riesgo)
+            inv_sugerida = capital_total * 0.1 # 100€ de los 1.000€
+            
+            instruccion = (
+                f"🚀 *NUEVA SEÑAL IA*\n\n"
                 f"Activo: `{ganador['Activo']}`\n"
                 f"Convicción: `{ganador['Convicción (%)']}%` 📈\n"
-                f"Precio: `{ganador['Precio ($)']} $`\n\n"
-                f"💡 *Instrucción de Compra:*\n"
-                f"Comprar `{acciones:.4f}` acciones.\n"
-                f"Inversión: `{acciones * ganador['Precio ($)']:.2f} €`"
+                f"Sugerencia: Invertir `{inv_sugerida} €`"
             )
             
             if activar_alertas:
-                enviar_alerta_telegram(reporte)
-                st.toast("📲 Alerta enviada al móvil.")
-        else:
-            st.error(f"Convicción insuficiente ({ganador['Convicción (%)']}%). Liquidez al 100%.")
+                # Enviar alerta real
+                requests.post(f"https://api.telegram.org/bot{token_input}/sendMessage", 
+                             json={"chat_id": chat_id_input, "text": instruccion, "parse_mode": "Markdown"})
+                st.toast("📲 Alerta enviada a Telegram")
