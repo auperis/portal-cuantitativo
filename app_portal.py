@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 17: AJUSTADOR DE VENTAJA NETA (DYNAMIC THRESHOLD)
-# Objetivo: Calcular el umbral de convicción mínimo basado en costes y fiscalidad.
+# ARQUITECTURA FASE 18: AGENTE DE ADAPTACIÓN (REINFORCEMENT LEARNING LIGHT)
+# Objetivo: Ajustar el umbral dinámico basado en el éxito reciente de la IA.
 # ==============================================================================
 
 import streamlit as st
@@ -15,7 +15,11 @@ import os
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Ventaja Neta", layout="wide", page_icon="📈")
+st.set_page_config(page_title="Portal IA - Adaptación", layout="wide", page_icon="🧠")
+
+# Inicializamos la "Memoria de Rendimiento" (Aprendizaje por Refuerzo)
+if 'performance_score' not in st.session_state:
+    st.session_state['performance_score'] = 1.0  # 1.0 es neutral
 
 # ------------------------------------------------------------------------------
 # 2. BARRA LATERAL: AJUSTES DE INFRAESTRUCTURA
@@ -71,12 +75,18 @@ def ejecutar_radar_ia():
     return resultados
 
 # ------------------------------------------------------------------------------
-# 5. DASHBOARD: EL AJUSTADOR DE VENTAJA NETA
+# 5. DASHBOARD: EL AGENTE DE ADAPTACIÓN
 # ------------------------------------------------------------------------------
-st.title("🤖 Portal IA: Optimizador de Ventaja Neta")
-st.markdown(f"### Análisis Institucional de {capital_total} €")
+st.title("🧠 Portal IA: Agente de Adaptación")
+st.markdown(f"### Gestión de Cartera de {capital_total} €")
 
-if st.button("🚀 Calcular Ventaja Neta"):
+# Visualización del "Estado de Ánimo" de la IA (Adaptación)
+col_a, col_b = st.columns([3, 1])
+with col_b:
+    st.metric("Factor de Adaptación", f"{st.session_state['performance_score']:.2f}x", 
+              help="Si es > 1.0, la IA es más exigente por errores recientes.")
+
+if st.button("🚀 Calcular Ventaja Adaptativa"):
     with st.spinner("Analizando fricción y señales..."):
         data = ejecutar_radar_ia()
         
@@ -88,46 +98,63 @@ if st.button("🚀 Calcular Ventaja Neta"):
             precio = ganador["Precio ($)"]
             
             # --- CÁLCULOS DE FRICCION ---
-            riesgo_eur = capital_total * 0.02 # 20€
-            beneficio_obj_bruto = riesgo_eur * 2 # Objetivo 40€
+            riesgo_eur = capital_total * 0.02
+            beneficio_obj_bruto = riesgo_eur * 2
             
-            # El lastre depende del tipo de activo
             if tipo_activo == "Acumulación (Eficiente)":
-                lastre_fiscal = 0 # No pagamos hasta vender dentro de años
+                lastre_fiscal = 0
             else:
                 lastre_fiscal = beneficio_obj_bruto * (tasa_impuestos / 100)
             
-            costes_totales = (comision_fija * 2) + (beneficio_obj_bruto * 0.005) # Incluye Spread
+            costes_totales = (comision_fija * 2) + (beneficio_obj_bruto * 0.005)
             friccion_total = lastre_fiscal + costes_totales
             
-            # --- CÁLCULO DEL UMBRAL DINÁMICO (LA MAGIA) ---
-            # Si la fricción es el 25% del beneficio esperado, necesitamos un 25% más de convicción sobre el 50% base.
+            # --- CÁLCULO DEL UMBRAL DINÁMICO + ADAPTACIÓN ---
             ventaja_necesaria = (friccion_total / beneficio_obj_bruto) * 100
-            umbral_dinamico = 50 + ventaja_necesaria
+            
+            # El factor de adaptación multiplica la exigencia si ha habido fallos
+            umbral_base = 50 + ventaja_necesaria
+            umbral_adaptado = umbral_base * st.session_state['performance_score']
             
             st.divider()
-            st.subheader(f"🎯 Diagnóstico Dinámico: {ganador['Activo']}")
+            st.subheader(f"🎯 Diagnóstico Adaptativo: {ganador['Activo']}")
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Convicción IA", f"{ganador['Convicción (%)']}%")
-            c2.metric("Umbral de Rentabilidad", f"{umbral_dinamico:.1f}%", help="Mínimo necesario para cubrir gastos.")
+            c2.metric("Umbral de Rentabilidad", f"{umbral_adaptado:.1f}%", 
+                      delta=f"{umbral_adaptado - umbral_base:.1f}% Extra por Adaptación")
             c3.metric("Fricción Total", f"{friccion_total:.2f} €", delta_color="inverse")
             
-            # Lógica de Decisión
-            if ganador["Convicción (%)"] >= umbral_dinamico:
-                st.success(f"✅ VENTAJA NETA POSITIVA: La IA supera el lastre de {friccion_total:.2f} €.")
-                
+            # Lógica de Decisión corregida
+            if ganador["Convicción (%)"] >= umbral_adaptado:
+                st.success(f"✅ VENTAJA NETA POSITIVA")
                 acciones = riesgo_eur / (precio * (stop_loss_pct / 100))
                 reporte = (
-                    f"🚀 *ORDEN DE VENTAJA NETA*\n\n"
+                    f"🧠 *ORDEN ADAPTATIVA IA*\n\n"
                     f"Activo: `{ganador['Activo']}`\n"
-                    f"IA: `{ganador['Convicción (%)']}%` vs Mínimo: `{umbral_dinamico:.1f}%` ✅\n"
+                    f"IA: `{ganador['Convicción (%)']}%` vs Mínimo: `{umbral_adaptado:.1f}%` ✅\n"
                     f"Acciones: `{acciones:.4f}`\n"
-                    f"Fricción: `{friccion_total:.2f} €`"
+                    f"Ajuste Adaptativo: `{st.session_state['performance_score']:.2f}x`"
                 )
                 if activar_alertas:
                     enviar_alerta(reporte)
                     st.toast("📲 Alerta enviada.")
             else:
-                st.error(f"❌ VENTAJA NETA NEGATIVA: Necesitas un {umbral_dinamico:.1f}% de convicción para que esta operación sea rentable.")
-                st.info(f"💡 Consejo del Arquitecto: Para bajar el umbral a {50 + ((costes_totales / beneficio_obj_bruto) * 100):.1f}%, cambia a una estrategia de Acumulación.")
+                st.error(f"❌ VENTAJA NETA NEGATIVA: Necesitas un {umbral_adaptado:.1f}% de convicción.")
+                
+                # CORRECCIÓN DE LA LÓGICA DE CONSEJO:
+                if tipo_activo != "Acumulación (Eficiente)":
+                    st.info(f"💡 Consejo del Arquitecto: Para bajar el umbral, cambia a una estrategia de Acumulación.")
+                else:
+                    st.info(f"💡 Consejo del Arquitecto: El umbral es bajo ({umbral_adaptado:.1f}%), pero la IA hoy no tiene suficiente convicción. Es mejor no operar.")
+
+# --- BOTONES DE APRENDIZAJE (SIMULACIÓN DE REINFORCEMENT LEARNING) ---
+st.sidebar.divider()
+st.sidebar.subheader("🕹️ Entrenamiento del Entrenador")
+if st.sidebar.button("👍 Marcar Última Señal como ACIERTO"):
+    st.session_state['performance_score'] = max(0.9, st.session_state['performance_score'] - 0.05)
+    st.toast("La IA gana confianza. Umbral reducido.")
+
+if st.sidebar.button("👎 Marcar Última Señal como ERROR"):
+    st.session_state['performance_score'] = min(1.2, st.session_state['performance_score'] + 0.05)
+    st.toast("La IA es más cautelosa. Umbral aumentado.")
