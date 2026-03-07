@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 11 (VERSIÓN V8): PERSISTENCIA TOTAL + UI PREMIUM
-# Objetivo: Solucionar la 'Amnesia de Identidad' del Project ID en Streamlit Cloud.
+# ARQUITECTURA FASE 12: AUDITORÍA DE ACIERTOS (EL MARCADOR)
+# Objetivo: Comparar predicciones pasadas con la realidad del mercado.
 # ==============================================================================
 
 import streamlit as st
@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 import matplotlib.pyplot as plt
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import os
 
@@ -20,17 +20,14 @@ from google.cloud import firestore as google_firestore
 from firebase_admin import initialize_app, _apps
 
 # ------------------------------------------------------------------------------
-# 1. INICIALIZACIÓN DE LA NUBE (PROTOCOLO DE IDENTIDAD ROBUSTO)
+# 1. INICIALIZACIÓN DE LA NUBE
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📡")
+st.set_page_config(page_title="Portal Cuantitativo IA", layout="wide", page_icon="📊")
 
-# 1.1. Buscamos el ID del proyecto en múltiples fuentes
 app_id = os.environ.get('__app_id', 'mi-portal-ia-1000')
 firebase_config_raw = os.environ.get('__firebase_config')
 
 project_id = None
-
-# Intento A: Desde la variable de configuración inyectada por el entorno
 if firebase_config_raw:
     try:
         config_dict = json.loads(firebase_config_raw)
@@ -38,36 +35,21 @@ if firebase_config_raw:
     except:
         pass
 
-# Intento B: Si el Intento A falla, buscamos en secretos de Streamlit (si existen)
-if not project_id:
-    try:
-        project_id = st.secrets["general"]["project_id"]
-    except:
-        pass
-
-# 1.2. Inicialización Crítica del Cliente
 db = None
 try:
     if project_id:
-        # Forzamos la identidad en la variable de entorno que busca Firestore por defecto
         os.environ["GOOGLE_CLOUD_PROJECT"] = project_id
-        
-        # Inicializamos el cliente pasando el ID directamente al constructor
         db = google_firestore.Client(project=project_id)
-        
-        # Inicializamos Firebase Admin para otros servicios si es necesario
         if not _apps:
             initialize_app(options={'projectId': project_id})
-            
-        st.sidebar.success(f"📡 Satélite Sintonizado: {project_id}")
+        st.sidebar.success(f"📡 Satélite Conectado: {project_id}")
     else:
-        st.sidebar.error("❌ Error de Identidad: No se detectó Project ID.")
-        st.sidebar.info("Revisa la integración de base de datos en Streamlit Cloud.")
+        st.sidebar.error("❌ Error: No se detectó ID de Proyecto.")
 except Exception as e:
-    st.sidebar.error(f"⚠️ Fallo de Conexión: {e}")
+    st.sidebar.error(f"⚠️ Error de Conexión: {e}")
 
 # ------------------------------------------------------------------------------
-# 2. PANEL DE CONTROL (Barra Lateral)
+# 2. PANEL DE CONTROL
 # ------------------------------------------------------------------------------
 st.sidebar.header("📡 Configuración del Radar")
 tickers_input = st.sidebar.text_input("Activos (separados por coma)", value="SPY, GLD, QQQ, TLT, BTC-USD")
@@ -77,10 +59,10 @@ capital_usuario = st.sidebar.number_input("Capital Total (€)", min_value=100, 
 stop_loss_usuario = st.sidebar.slider("Stop-Loss (Paracaídas %)", 1.0, 15.0, 5.0, 0.5)
 umbral_conviccion = st.sidebar.slider("Filtro de Convicción IA (%)", 50, 80, 58)
 
-boton_analizar = st.sidebar.button("Activar Radar y Guardar en la Nube")
+boton_analizar = st.sidebar.button("Activar Radar y Auditar Nube")
 
 # ------------------------------------------------------------------------------
-# 3. MOTOR LÓGICO
+# 3. MOTOR LÓGICO E INDICADORES
 # ------------------------------------------------------------------------------
 def obtener_datos(ticker):
     return yf.Ticker(ticker).history(period="3y")
@@ -121,87 +103,117 @@ def calcular_ejecucion_fraccionada(capital, precio, stop_loss, riesgo_max=2.0):
     if (acc * precio) > capital: acc = capital / precio
     return acc, (acc * precio), perdida_max_euros
 
-# --- PERSISTENCIA (FIRESTORE) ---
+# --- PERSISTENCIA Y AUDITORÍA ---
 def guardar_en_nube(data_list):
     if db is None: return
     for item in data_list:
         try:
-            # Ruta obligatoria para permisos de escritura: artifacts/{appId}/public/data/{collection}
             db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').document().set(item)
         except: pass
 
-def cargar_de_nube():
+def realizar_auditoria_nube():
+    """Descarga predicciones y comprueba si acertaron usando precios actuales."""
     if db is None: return []
     try:
-        # Recuperamos los últimos 10 registros
-        docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(10).stream()
-        return [doc.to_dict() for doc in docs]
-    except: return []
+        docs = db.collection('artifacts').document(app_id).collection('public').document('data').collection('predicciones').order_by('Fecha', direction=google_firestore.Query.DESCENDING).limit(20).stream()
+        registros = [doc.to_dict() for doc in docs]
+        
+        if not registros: return []
+
+        # Creamos una lista para los resultados auditados
+        auditados = []
+        for reg in registros:
+            ticker = reg['Activo']
+            # Obtenemos precio actual para ver si subió desde la predicción
+            info_mercado = yf.Ticker(ticker).history(period="2d")
+            if len(info_mercado) >= 2:
+                precio_prediccion = reg['Precio ($)']
+                precio_real_hoy = info_mercado['Close'].iloc[-1]
+                
+                # ¿Acertó la IA? (Solo si la convicción era alta)
+                subio_realmente = 1 if precio_real_hoy > precio_prediccion else 0
+                conviccion_alta = 1 if reg['Convicción (%)'] >= 50 else 0 # 50 como base de dirección
+                
+                reg['Resultado'] = "✅ ACIERTO" if subio_realmente == conviccion_alta else "❌ ERROR"
+                reg['Variación Real (%)'] = round(((precio_real_hoy / precio_prediccion) - 1) * 100, 2)
+                auditados.append(reg)
+        return auditados
+    except Exception as e:
+        st.sidebar.error(f"Error en auditoría: {e}")
+        return []
 
 # ------------------------------------------------------------------------------
 # 4. EJECUCIÓN WEB
 # ------------------------------------------------------------------------------
 st.title("🤖 Portal de Inteligencia Cuantitativa")
 
-if boton_analizar:
-    lista_activos = [x.strip().upper() for x in tickers_input.split(',')]
-    resultados_hoy = []
-    
-    progreso = st.progress(0)
-    for i, ticker in enumerate(lista_activos):
-        try:
-            df_raw = obtener_datos(ticker)
-            if not df_raw.empty:
-                df = calcular_indicadores(df_raw)
-                mod, prec, pists = entrenar_modelo(df)
-                hoy = df.iloc[-1:]
-                prob = mod.predict_proba(hoy[pists])[0][1] * 100
-                precio = hoy['Close'].values[0]
-                
-                resultados_hoy.append({
-                    "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Activo": ticker,
-                    "Convicción (%)": round(prob, 2),
-                    "Precio ($)": round(precio, 2),
-                    "Precisión (%)": round(prec, 2)
-                })
-        except: pass
-        progreso.progress((i + 1) / len(lista_activos))
+tab1, tab2 = st.tabs(["🎯 Radar de Hoy", "📊 Auditoría de la IA"])
 
-    if resultados_hoy:
-        # Guardamos en la nube solo si la conexión db está activa
-        if db:
-            guardar_en_nube(resultados_hoy)
-            st.toast("✅ Predicciones sincronizadas con la nube.")
+with tab1:
+    if boton_analizar:
+        lista_activos = [x.strip().upper() for x in tickers_input.split(',')]
+        resultados_hoy = []
         
-        df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
-        
-        st.subheader("🏆 Ranking Institucional de Hoy")
-        # Mostramos el ranking con el degradado verde que facilita la lectura
-        st.dataframe(
-            df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), 
-            use_container_width=True
-        )
-        
-        ganador = df_rank.iloc[0]
-        if ganador["Convicción (%)"] >= umbral_conviccion:
-            st.success(f"👑 ACTIVO ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
-            acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
+        progreso = st.progress(0)
+        for i, ticker in enumerate(lista_activos):
+            try:
+                df_raw = obtener_datos(ticker)
+                if not df_raw.empty:
+                    df = calcular_indicadores(df_raw)
+                    mod, prec, pists = entrenar_modelo(df)
+                    hoy = df.iloc[-1:]
+                    prob = mod.predict_proba(hoy[pists])[0][1] * 100
+                    precio = hoy['Close'].values[0]
+                    
+                    resultados_hoy.append({
+                        "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                        "Activo": ticker,
+                        "Convicción (%)": round(prob, 2),
+                        "Precio ($)": round(precio, 2),
+                        "Precisión (%)": round(prec, 2)
+                    })
+            except: pass
+            progreso.progress((i + 1) / len(lista_activos))
+
+        if resultados_hoy:
+            if db: guardar_en_nube(resultados_hoy)
+            df_rank = pd.DataFrame(resultados_hoy).sort_values("Convicción (%)", ascending=False)
             
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Acciones (Decimales)", f"{acc:.4f}")
-            c2.metric("Inversión Sugerida", f"{inv:.2f} €")
-            c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
-            st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}. Riesgo bloqueado.")
-        else:
-            st.error("Convicción insuficiente. Mantenemos liquidez.")
+            st.subheader("🏆 Ranking Institucional")
+            st.dataframe(df_rank.style.background_gradient(cmap='Greens', subset=['Convicción (%)']), use_container_width=True)
+            
+            ganador = df_rank.iloc[0]
+            if ganador["Convicción (%)"] >= umbral_conviccion:
+                st.success(f"👑 ELEGIDO: {ganador['Activo']} ({ganador['Convicción (%)']}%)")
+                acc, inv, riesgo = calcular_ejecucion_fraccionada(capital_usuario, ganador["Precio ($)"], stop_loss_usuario)
+                
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Acciones (Fracciones)", f"{acc:.4f}")
+                c2.metric("Inversión", f"{inv:.2f} €")
+                c3.metric("Riesgo Máximo", f"{riesgo:.2f} €")
+                st.info(f"👉 **Orden:** Compra {acc:.4f} de {ganador['Activo']}.")
+            else:
+                st.error("Ningún activo superó el filtro. Liquidez al 100%.")
 
-st.markdown("---")
-st.subheader("🌐 Registro Histórico Permanente (Cloud Storage)")
-historial_nube = cargar_de_nube()
-
-if historial_nube:
-    df_cloud = pd.DataFrame(historial_nube)
-    st.table(df_cloud.head(10))
-else:
-    st.caption("No se detectan registros históricos en la nube. Realiza un análisis para comenzar el historial.")
+with tab2:
+    st.subheader("🌐 Marcador del Estadio (Realidad vs IA)")
+    st.markdown("Comparativa de las últimas predicciones guardadas contra el precio actual del mercado.")
+    
+    datos_auditados = realizar_auditoria_nube()
+    
+    if datos_auditados:
+        df_auditoria = pd.DataFrame(datos_auditados)
+        
+        # Cálculo del HIT RATE (Porcentaje de acierto real)
+        total = len(df_auditoria)
+        aciertos = len(df_auditoria[df_auditoria['Resultado'] == "✅ ACIERTO"])
+        hit_rate = (aciertos / total) * 100
+        
+        col_aud1, col_aud2 = st.columns(2)
+        col_aud1.metric("Hit Rate Real (Caja Negra)", f"{hit_rate:.2f}%", 
+                       delta="Acierto vs Mercado", delta_color="normal" if hit_rate > 50 else "inverse")
+        col_aud2.metric("Muestras Auditadas", total)
+        
+        st.table(df_auditoria[['Fecha', 'Activo', 'Convicción (%)', 'Variación Real (%)', 'Resultado']])
+    else:
+        st.info("No hay datos suficientes para auditar. Realiza análisis durante varios días para ver resultados.")
