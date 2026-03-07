@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 33: EXPANSIÓN DEL UNIVERSO (SECTOR ROTATION)
-# Objetivo: Aumentar la superficie de escaneo agrupando activos por sectores
-# para encontrar oportunidades ocultas cuando los índices principales descansan.
+# ARQUITECTURA FASE 34: ESCÁNER DE FUERZA RELATIVA (RELATIVE STRENGTH)
+# Objetivo: Ordenar el universo de activos por la convicción de la IA para
+# mantener la vigilancia estratégica incluso en días de "Cero Operaciones".
 # ==============================================================================
 
 import streamlit as st
@@ -14,9 +14,9 @@ from datetime import datetime
 import os
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN VISUAL
+# 1. CONFIGURACIÓN VISUAL (MODO INSTITUCIONAL)
 # ------------------------------------------------------------------------------
-st.set_page_config(page_title="Portal IA - Radar Expandido", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="Portal IA - Fuerza Relativa", layout="wide", page_icon="🏆")
 
 if 'auto_bias' not in st.session_state:
     st.session_state['auto_bias'] = 0.0
@@ -34,13 +34,12 @@ activar_alertas = st.sidebar.checkbox("Activar Alertas Telegram", value=True)
 
 st.sidebar.divider()
 st.sidebar.header("🌍 Universo de Escaneo")
-# NUEVO: Selector de Universo Invertible
-escanear_indices = st.sidebar.checkbox("Índices Globales (SPY, QQQ, IWM)", value=True)
+escanear_indices = st.sidebar.checkbox("Índices (SPY, QQQ, IWM)", value=True)
 escanear_sectores = st.sidebar.checkbox("Sectores (XLK, XLF, XLV, XLE)", value=True)
-escanear_refugios = st.sidebar.checkbox("Refugios/Cripto (GLD, TLT, BTC-USD)", value=True)
+escanear_refugios = st.sidebar.checkbox("Refugios (GLD, TLT, BTC-USD)", value=True)
 
 st.sidebar.divider()
-st.sidebar.header("🎛️ Calibración IA y Filtros")
+st.sidebar.header("🎛️ Calibración IA")
 dias_vision_ia = st.sidebar.slider("Visión IA (Días)", 1, 15, 5)
 umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 70.0, 52.0)
 multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 2.0)
@@ -105,31 +104,32 @@ def enviar_alerta(mensaje):
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🌍 Portal IA: Radar de Rotación Sectorial")
+st.title("🏆 Portal IA: Ranking de Fuerza Relativa")
 
-tab1, tab2 = st.tabs(["🚀 Radar en Vivo (HOY)", "🔬 Memoria del Sistema"])
+tab1, tab2 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría"])
 
 umbral_f = umbral_base + st.session_state['auto_bias']
 
 with tab1:
-    st.markdown(f"### Escáner Institucional | Umbral Exigido: **{umbral_f:.1f}%**")
+    st.markdown(f"### Muro de Inteligencia | Umbral Exigido: **{umbral_f:.1f}%**")
     
-    if st.button("🚀 INICIAR ESCÁNER GLOBAL", type="primary"):
-        # Construimos el universo según lo seleccionado en la barra lateral
+    # CORRECCIÓN DE INTERFAZ: Se elimina type="primary" para quitar el color rojo de alerta.
+    # Ahora es un botón neutral institucional.
+    if st.button("🔎 EJECUTAR ANÁLISIS DE FUERZA RELATIVA"):
         universo = []
         if escanear_indices: universo.extend([("SPY", "S&P 500"), ("QQQ", "Nasdaq"), ("IWM", "Russell 2000")])
         if escanear_sectores: universo.extend([("XLK", "Tecnología"), ("XLF", "Financiero"), ("XLV", "Salud"), ("XLE", "Energía")])
         if escanear_refugios: universo.extend([("GLD", "Oro"), ("TLT", "Bonos 20A"), ("BTC-USD", "Bitcoin")])
         
         if not universo:
-            st.error("⚠️ Debes seleccionar al menos un grupo de activos en la barra lateral.")
+            st.error("⚠️ Debes seleccionar al menos un grupo de activos.")
         else:
             resultados = []
             operaciones_encontradas = 0
             barra_progreso = st.progress(0)
             
             for i, (tick, nombre) in enumerate(universo):
-                with st.spinner(f"Analizando {nombre} ({tick})..."):
+                with st.spinner(f"Midiendo fuerza relativa de {nombre} ({tick})..."):
                     prob, datos_hoy = entrenar_ia_radar(tick, dias_vision_ia)
                     
                     if prob is not None:
@@ -139,66 +139,63 @@ with tab1:
                         rsi_ok = datos_hoy['RSI'] < 70
                         
                         estado = "🔴 DESCARTADO"
-                        accion = "Esperar / Liquidez"
+                        accion = "Liquidez"
                         
                         if prob >= umbral_f and vol_ok and macro_ok and rsi_ok:
                             estado = "🟢 SEÑAL CONFIRMADA"
                             operaciones_encontradas += 1
-                            
                             rango = 100 - umbral_f
                             factor = min(max((prob - umbral_f) / rango, 0), 1) if rango > 0 else 0
                             exp_pct = 0.05 + (factor * (max_exposicion/100 - 0.05))
                             inversion = capital_total * exp_pct
                             acciones = inversion / precio
-                            
                             stop_distancia = datos_hoy['ATR_pct'] * multiplicador_atr
                             precio_stop = precio * (1 - (stop_distancia/100))
-                            
                             accion = f"Comprar {acciones:.2f} uds"
                             
-                            msg = (
-                                f"🌍 *SEÑAL DE ROTACIÓN SECTORIAL*\n\n"
-                                f"Sector/Activo: `{nombre} ({tick})`\n"
-                                f"Convicción IA: `{prob:.1f}%` 📈\n"
-                                f"Precio Actual: `{precio:.2f} $`\n\n"
-                                f"📦 *Orden:* Invertir `{inversion:.2f} €`.\n"
-                                f"🪂 *Stop ATR:* `{precio_stop:.2f} $`"
-                            )
-                            if activar_alertas: enviar_alerta(msg)
-                                
                         elif prob >= umbral_f:
                             estado = "🟡 EN OBSERVACIÓN"
-                            if not macro_ok: accion = "Tendencia Macro Bajista"
-                            elif not rsi_ok: accion = "Sobrecomprado (RSI>70)"
-                            elif not vol_ok: accion = "Volatilidad Insuficiente"
+                            if not macro_ok: accion = "Tendencia Bajista (Media 200)"
+                            elif not rsi_ok: accion = "RSI Sobrecomprado"
+                            elif not vol_ok: accion = "Sin Volatilidad"
                             
                         resultados.append({
-                            "Categoría": nombre,
+                            "Activo": nombre,
                             "Ticker": tick,
-                            "Prob IA": f"{prob:.1f}%",
+                            # Guardamos la probabilidad como número para poder ordenar la tabla matemáticamente
+                            "Valor_Prob": prob, 
+                            "Convicción IA": f"{prob:.1f}%",
                             "Estado": estado,
                             "RSI": f"{datos_hoy['RSI']:.1f}",
                             "Instrucción": accion
                         })
                 
                 barra_progreso.progress((i + 1) / len(universo))
-                
-            st.subheader(f"📊 Resultados del Escáner ({len(universo)} Activos)")
-            df_res = pd.DataFrame(resultados)
             
-            # Usamos Streamlit native styling para resaltar colores
+            # MAGIA INSTITUCIONAL: Ordenamos los resultados de mayor a menor convicción
+            df_res = pd.DataFrame(resultados)
+            df_res = df_res.sort_values(by="Valor_Prob", ascending=False).reset_index(drop=True)
+            
+            # Eliminamos la columna de uso interno antes de mostrarla
+            df_res_mostrar = df_res.drop(columns=['Valor_Prob'])
+            
+            # Mostramos el líder indiscutible
+            lider = df_res.iloc[0]
+            st.info(f"🏆 **El Activo más fuerte hoy es {lider['Activo']}** con un {lider['Convicción IA']} de convicción. Su estado actual es: {lider['Estado']}.")
+            
+            st.subheader(f"📊 Ranking de Inteligencia ({len(universo)} Activos)")
+            
             def color_estado(val):
                 if "CONFIRMADA" in val: return 'background-color: #004d00; color: white'
                 elif "OBSERVACIÓN" in val: return 'background-color: #664d00; color: white'
                 elif "DESCARTADO" in val: return 'background-color: #4d0000; color: white'
                 return ''
                 
-            st.dataframe(df_res.style.applymap(color_estado, subset=['Estado']), use_container_width=True)
+            st.dataframe(df_res_mostrar.style.applymap(color_estado, subset=['Estado']), use_container_width=True)
             
-            if operaciones_encontradas > 0:
-                st.success(f"🎯 Se encontraron {operaciones_encontradas} oportunidades tras expandir el universo.")
-            else:
-                st.info("🛡️ Disciplina Institucional: 10 mercados analizados. 0 oportunidades claras. Protegiendo los 1.000 € hoy.")
+            if operaciones_encontradas == 0:
+                st.write("---")
+                st.warning("🛡️ **Análisis del Arquitecto:** Aunque no hay señales confirmadas de compra, el ranking superior te indica qué activos están acumulando fuerza. Vigila a los que están 'EN OBSERVACIÓN', ya que podrían dar señal verde mañana.")
 
 with tab2:
-    st.write("Módulo de calibración en reposo. Parámetros actuales optimizados.")
+    st.write("Módulo de memoria IA en reposo.")
