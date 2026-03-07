@@ -59,7 +59,6 @@ def calcular_indicadores(df):
 
 def entrenar_modelo(df):
     columnas_pistas = [
-        'Distancia_a_Media_%', 
         'Retorno_Hoy_%', 
         'Volatilidad_5D', 
         'Volumen_Relativo', 
