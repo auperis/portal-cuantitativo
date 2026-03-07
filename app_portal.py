@@ -1,7 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 25: AGENTE DE AUTO-CORRECCIÓN (SELF-CORRECTING LOGIC)
-# Objetivo: Ajustar automáticamente el umbral de convicción basándose en el
-# rendimiento neto (Beneficio vs Comisiones) para proteger los 1.000 €.
+# ARQUITECTURA FASE 25.1: AGENTE DE AUTO-CORRECCIÓN (CORRECCIÓN DE NOMBRE)
+# Objetivo: Corregir el NameError al llamar a la función de simulación.
 # ==============================================================================
 
 import streamlit as st
@@ -105,9 +104,10 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("Simulación y Aprendizaje")
+    # CORRECCIÓN: Se cambió 'ejecutar_autonoma' por 'ejecutar_simulacion_autonoma'
     if st.button("🏁 Ejecutar Simulación y Auto-Corregir"):
         with st.spinner("Simulando y ajustando redes neuronales..."):
-            curva, n_ops, u_final = ejecutar_autonoma("QQQ")
+            curva, n_ops, u_final = ejecutar_simulacion_autonoma("QQQ")
             st.line_chart(curva)
             
             beneficio = curva[-1] - capital_total
@@ -116,11 +116,11 @@ with col1:
             if beneficio < 0 and n_ops > 3:
                 # Si perdemos dinero operando mucho, subimos la exigencia
                 st.session_state['auto_bias'] += 2.0
-                st.warning(f"⚠️ Rendimiento negativo. El Agente ha subido el umbral a {u_final + 2:.1f}% para filtrar el ruido.")
+                st.warning(f"⚠️ Rendimiento negativo. El Agente ha subido el umbral a {u_final + 2.0:.1f}% para filtrar el ruido.")
             elif beneficio > 10:
                 # Si ganamos bien, podemos permitirnos ser un poco más flexibles
                 st.session_state['auto_bias'] -= 1.0
-                st.success(f"✅ Rendimiento positivo. El Agente ha bajado el umbral a {u_final - 1:.1f}% para capturar más señales.")
+                st.success(f"✅ Rendimiento positivo. El Agente ha bajado el umbral a {u_final - 1.0:.1f}% para capturar más señales.")
 
 with col2:
     st.metric("Sesgo de Auto-Corrección", f"+{st.session_state['auto_bias']}%")
