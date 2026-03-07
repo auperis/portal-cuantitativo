@@ -1,6 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 19: EL SIMULADOR DE VUELO (BACKTESTING LOCAL)
-# Objetivo: Validar la estrategia en el pasado antes de arriesgar los 1.000 €.
+# ARQUITECTURA FASE 19.1: EL SIMULADOR DE VUELO (CORRECCIÓN DE ERROR)
+# Objetivo: Corregir NameError en la métrica de beneficio final.
 # ==============================================================================
 
 import streamlit as st
@@ -75,17 +75,15 @@ def ejecutar_simulacion(ticker, dias_atras=30):
         # IA predice basándose solo en lo que sabía "ese día"
         prob = entrenar_y_predecir(ventana_estudio, pistas)
         
-        # Umbral dinámico (simplificado para backtest)
+        # Umbral dinámico
         umbral = 55.5 * st.session_state['performance_score']
         
         if prob >= umbral:
-            # Simulamos operación
             precio_entrada = datos_hoy['Close']
             resultado_real_manana = df.iloc[i+1]['Close'] if i+1 < len(df) else precio_entrada
             
-            # Resultado neto de la operación
             var_pct = (resultado_real_manana / precio_entrada) - 1
-            ganancia_bruta = (capital_simulado * 0.1) * var_pct # Invertimos 10%
+            ganancia_bruta = (capital_simulado * 0.1) * var_pct # 10% de exposición
             coste_peaje = comision_fija * 2
             
             capital_simulado += (ganancia_bruta - coste_peaje)
@@ -103,10 +101,7 @@ tab1, tab2 = st.tabs(["🎯 Radar en Vivo", "🎮 Simulador de Estrategia"])
 
 with tab1:
     st.info(f"Estado del Sistema: Adaptación a {st.session_state['performance_score']:.2f}x | Umbral: {(55.5 * st.session_state['performance_score']):.1f}%")
-    if st.button("🚀 Escaneo de Mercado"):
-        # Lógica de radar estándar (abreviada)
-        st.write("Analizando activos principales...")
-        # ... (Aquí iría la lógica de la Fase 18)
+    st.write("Usa la pestaña 'Simulador' para validar la estrategia antes de ejecutar el Radar.")
 
 with tab2:
     st.subheader("Simulación de los últimos 30 días")
@@ -120,7 +115,8 @@ with tab2:
             beneficio_final = curva[-1] - capital_total
             
             c1, c2 = st.columns(2)
-            c1.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficion_final:.2f} €")
+            # CORRECCIÓN AQUÍ: Se eliminó la 'n' de 'beneficion_final'
+            c1.metric("Resultado Final", f"{curva[-1]:.2f} €", delta=f"{beneficio_final:.2f} €")
             c2.metric("Eficiencia del Simulador", "Óptima" if beneficio_final > 0 else "Crítica")
 
 # --- BOTONES DE ADAPTACIÓN ---
