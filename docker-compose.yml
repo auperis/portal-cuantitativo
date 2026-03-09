@@ -2,6 +2,7 @@ services:
   portal_web:
     build: .
     container_name: ia_quant_portal
+    # Eliminamos la línea de versión para evitar el aviso amarillo de Docker
     command: streamlit run app_portal.py --server.port=8501 --server.address=0.0.0.0
     ports:
       - "8501:8501"
@@ -10,6 +11,8 @@ services:
   robot_ia:
     build: .
     container_name: ia_quant_robot
-    # MAGIA AQUÍ: Añadimos "-u" para que Python nos hable en directo por la consola
-    command: python -u robot_ejecutor.py
+    # PASO 2: La orden combinada. 
+    # 1. Lista archivos para ver si 'robot_ejecutor.py' existe dentro de la cápsula.
+    # 2. Ejecuta el robot con '-u' para que no haya silencios.
+    command: sh -c "ls -la && python -u robot_ejecutor.py"
     restart: always
