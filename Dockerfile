@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # 1. Sistema Operativo Base (Ligero y seguro)
-FROM python:3.9-slim
+FROM python:3.9
 
 # 2. Establecer el directorio de trabajo dentro de la cápsula
 WORKDIR /app
