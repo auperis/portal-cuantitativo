@@ -1,26 +1,16 @@
-# ==============================================================================
-# FASE 45.1: ORQUESTACIÓN AVANZADA (MODO DESARROLLO)
-# Objetivo: Conectar la carpeta local con el contenedor en tiempo real.
-# ==============================================================================
-
 version: '3.8'
 
 services:
   portal_web:
     build: .
     container_name: ia_quant_portal
-    # MAGIA PARA WINDOWS: fileWatcherType=poll obliga a Streamlit a mirar los cambios cada segundo
-    command: streamlit run app_portal.py --server.port=8501 --server.address=0.0.0.0 --server.fileWatcherType=poll
+    command: streamlit run app_portal.py --server.port=8501 --server.address=0.0.0.0
     ports:
       - "8501:8501"
-    volumes:
-      - .:/app  # La ventana de cristal
     restart: always
 
   robot_ia:
     build: .
     container_name: ia_quant_robot
     command: python robot_ejecutor.py
-    volumes:
-      - .:/app
     restart: always
