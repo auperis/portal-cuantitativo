@@ -59,6 +59,15 @@ dias_simulacion = st.sidebar.selectbox("Días de Simulación Auditoría", [90, 1
 # ------------------------------------------------------------------------------
 # 3. MOTOR DE CÁLCULO
 # ------------------------------------------------------------------------------
+
+# NUEVO: FASE 40 - El Bibliotecario Inteligente (Memoria Caché)
+# @st.cache_data le dice a Streamlit que guarde el resultado de esta función.
+# ttl=3600 significa "Time To Live": la fotocopia caduca y se borra a los 3600 segundos (1 hora).
+@st.cache_data(ttl=3600)
+def descargar_datos_cacheados(ticker, periodo="3y"):
+    """Descarga datos de Yahoo y los memoriza para no saturar la API."""
+    return yf.Ticker(ticker).history(period=periodo)
+
 def calcular_indicadores(df):
     d = df.copy()
     d['Retorno'] = d['Close'].pct_change() * 100
@@ -80,7 +89,9 @@ def calcular_indicadores(df):
     return d.dropna()
 
 def entrenar_ia_radar(ticker, dias_vision):
-    df_raw = yf.Ticker(ticker).history(period="3y")
+    # FASE 40: Sustituimos la llamada directa a Yahoo por nuestra función con Caché
+    df_raw = descargar_datos_cacheados(ticker, "3y")
+    
     if len(df_raw) < 200: return None, None, None
     
     df = calcular_indicadores(df_raw)
@@ -103,7 +114,9 @@ def entrenar_ia_radar(ticker, dias_vision):
     return prob, hoy, importancias
 
 def ejecutar_simulacion_parking(ticker, dias, dias_vision):
-    df = calcular_indicadores(yf.Ticker(ticker).history(period="3y"))
+    # FASE 40: Sustituimos la llamada directa en el simulador también
+    df_raw = descargar_datos_cacheados(ticker, "3y")
+    df = calcular_indicadores(df_raw)
     
     liquidez = capital_total
     en_posicion = False
