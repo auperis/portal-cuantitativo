@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   portal_web:
     build: .
@@ -12,5 +10,6 @@ services:
   robot_ia:
     build: .
     container_name: ia_quant_robot
-    command: python robot_ejecutor.py
+    # MAGIA AQUÍ: Añadimos "-u" para que Python nos hable en directo por la consola
+    command: python -u robot_ejecutor.py
     restart: always
