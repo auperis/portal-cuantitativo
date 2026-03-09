@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 37: EL PUENTE A INVESTGLASS (GENERADOR DE ÓRDENES)
-# Objetivo: Exportar las decisiones de la IA en un formato estandarizado para
-# auditoría institucional y ejecución en sistemas de gestión de carteras.
+# ARQUITECTURA FASE 38: EL LECTOR DE BITÁCORA (LOCAL LEDGER)
+# Objetivo: Permitir la ingesta local de archivos CSV para auditar y analizar
+# las decisiones pasadas de la IA sin depender de bases de datos en la nube.
 # ==============================================================================
 
 import streamlit as st
@@ -38,6 +38,7 @@ escanear_indices = st.sidebar.checkbox("Índices (SPY, QQQ, IWM)", value=True)
 escanear_sectores = st.sidebar.checkbox("Sectores (XLK, XLF, XLV, XLE)", value=True)
 escanear_refugios = st.sidebar.checkbox("Refugios (GLD, TLT, BTC-USD)", value=True)
 
+# Hemos ocultado la caja fuerte de Firebase a petición del Arquitecto (Modo Local On-Premise)
 st.sidebar.divider()
 st.sidebar.header("🎛️ Calibración IA")
 dias_vision_ia = st.sidebar.slider("Visión IA (Días)", 1, 15, 5)
@@ -169,9 +170,10 @@ def enviar_alerta(mensaje):
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL
 # ------------------------------------------------------------------------------
-st.title("🏦 Portal IA: Integración de Órdenes")
+st.title("🏦 Portal IA: Ecosistema Local On-Premise")
 
-tab1, tab2 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría"])
+# NUEVO: Añadida la tercera pestaña "Diario Local"
+tab1, tab2, tab3 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría Algorítmica", "📂 Diario Local (Ledger)"])
 
 umbral_f = umbral_base + st.session_state['auto_bias']
 
@@ -188,7 +190,7 @@ with tab1:
             st.error("⚠️ Debes seleccionar al menos un grupo de activos.")
         else:
             resultados = []
-            log_ordenes = [] # NUEVO: Guardaremos los datos limpios para exportar
+            log_ordenes = []
             operaciones_encontradas = 0
             barra_progreso = st.progress(0)
             
@@ -229,7 +231,6 @@ with tab1:
                         motivo_principal = max(pesos_ia, key=pesos_ia.get)
                         peso_motivo = pesos_ia[motivo_principal]
                             
-                        # Datos para la UI
                         resultados.append({
                             "Activo": nombre,
                             "Ticker": tick,
@@ -241,7 +242,6 @@ with tab1:
                             "Instrucción": accion
                         })
                         
-                        # NUEVO: FASE 37 - Formato InvestGlass (Trade Log)
                         fecha_hoy = datetime.now().strftime("%Y-%m-%d")
                         tipo_orden = "BUY" if "CONFIRMADA" in estado else "HOLD_CASH"
                         
@@ -276,24 +276,22 @@ with tab1:
                 
             st.dataframe(df_res_mostrar.style.applymap(color_estado, subset=['Estado']), use_container_width=True)
             
-            # NUEVO: FASE 37 - Generador de archivo CSV para Exportación
             st.divider()
-            st.subheader("🏦 Integración Institucional (Portfolio Management)")
+            st.subheader("🏦 Exportación On-Premise (InvestGlass Ready)")
             
             df_ordenes = pd.DataFrame(log_ordenes)
             csv_data = df_ordenes.to_csv(index=False).encode('utf-8')
             
             if operaciones_encontradas > 0:
-                st.success(f"🎯 Se han generado {operaciones_encontradas} órdenes de ejecución. Listas para ser ingeridas por tu Broker o InvestGlass.")
+                st.success(f"🎯 Se han generado {operaciones_encontradas} órdenes. Descarga el archivo para guardarlo en tu registro local.")
             else:
-                st.warning("🛡️ Se ha generado el archivo de auditoría, indicando explícitamente a los sistemas la orden de mantener liquidez (HOLD_CASH).")
+                st.info("🛡️ El archivo CSV generado hoy contiene puras órdenes de HOLD_CASH. Es vital guardarlo para tu estadística.")
                 
             st.download_button(
-                label="📥 Descargar Archivo de Órdenes (InvestGlass Ready CSV)",
+                label="📥 Descargar Archivo de Órdenes Diario (CSV)",
                 data=csv_data,
                 file_name=f"trade_log_IA_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                type="primary"
+                mime="text/csv"
             )
 
 with tab2:
@@ -313,3 +311,54 @@ with tab2:
             c_a.metric("Operaciones Realizadas", n_ops)
             c_b.metric("Intereses por Esperar", f"+{int_acumulados:.2f} €", delta="Dinero 100% Pasivo")
             c_c.metric("Beneficio Neto Total", f"{beneficio_total:.2f} €", delta=f"Capital Final: {curva[-1]:.2f} €")
+
+# NUEVO: FASE 38 - La Pestaña de Diario Local
+with tab3:
+    st.subheader("📂 Lector de Bitácora Local (Data Prep)")
+    st.write("Arrastra aquí los archivos CSV que has descargado en días anteriores. El sistema los leerá localmente sin enviarlos a internet.")
+    
+    # Cargador de archivos que acepta múltiples CSV
+    archivos_subidos = st.file_uploader("Sube tus archivos trade_log_IA.csv", type="csv", accept_multiple_files=True)
+    
+    if archivos_subidos:
+        st.success(f"✅ {len(archivos_subidos)} archivo(s) cargado(s) en la memoria local.")
+        
+        # Combinamos todos los archivos en un solo DataFrame gigante
+        lista_dfs = []
+        for archivo in archivos_subidos:
+            df_temp = pd.read_csv(archivo)
+            lista_dfs.append(df_temp)
+            
+        df_historico = pd.concat(lista_dfs, ignore_index=True)
+        
+        # Limpiamos duplicados (por si el usuario sube el archivo de hoy dos veces por error)
+        df_historico = df_historico.drop_duplicates()
+        
+        st.write("### 📊 Resumen Estadístico de tu Cartera")
+        
+        # Cálculos de Análisis
+        total_analizados = len(df_historico)
+        ordenes_compra = len(df_historico[df_historico['Order_Type'] == 'BUY'])
+        ordenes_espera = len(df_historico[df_historico['Order_Type'] == 'HOLD_CASH'])
+        
+        # El "Ratio de Acción" nos dice qué porcentaje del tiempo realmente disparamos el francotirador
+        ratio_accion = (ordenes_compra / total_analizados) * 100 if total_analizados > 0 else 0
+        
+        col_1, col_2, col_3 = st.columns(3)
+        col_1.metric("Análisis Registrados", total_analizados, help="Total de activos escaneados en todos tus archivos.")
+        col_2.metric("Órdenes de Compra Emitidas", ordenes_compra)
+        col_3.metric("Ratio de Acción", f"{ratio_accion:.1f}%", help="Mide qué tan selectivo es tu sistema.")
+        
+        st.divider()
+        st.write("### 🧠 ¿Qué piensa tu IA? (Patrones de Decisión)")
+        
+        # Mostramos los motivos principales por los que la IA descarta el mercado
+        st.write("Frecuencia del Motor de Decisión (XAI):")
+        conteo_motivos = df_historico['AI_Reasoning_XAI'].value_counts()
+        st.bar_chart(conteo_motivos)
+        
+        # Mostramos la tabla unificada para que el usuario pueda filtrar
+        st.write("Registro Completo (Filtrable):")
+        st.dataframe(df_historico)
+        
+        st.info("💡 Este paso es el pre-procesamiento de datos (Data Prep) necesario antes de conectar tus resultados a una herramienta de Business Intelligence como **Tableau AI**.")
