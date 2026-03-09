@@ -97,7 +97,7 @@ def entrenar_ia_radar(ticker, dias_vision):
     pistas = ['Retorno', 'Volatilidad', 'RSI']
     if len(df_train) < 50: return None, None, None
         
-    model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42)
+    model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42, n_jobs=-1)
     model.fit(df_train[pistas], df_train['Target'])
     
     hoy = df.iloc[-1]
@@ -146,7 +146,7 @@ def ejecutar_simulacion_parking(ticker, dias, dias_vision):
                 df_train['Target'] = np.where(df_train['Close'].shift(-dias_vision) > df_train['Close'] * 1.01, 1, 0)
                 df_train = df_train.dropna()
                 if len(df_train) >= 50:
-                    modelo = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42)
+                    modelo = RandomForestClassifier(n_estimators=50, max_depth=5, random_state=42, n_jobs=-1)
                     modelo.fit(df_train[['Retorno', 'Volatilidad', 'RSI']], df_train['Target'])
                     prob = modelo.predict_proba(estudio[['Retorno', 'Volatilidad', 'RSI']].iloc[-1:]) [0][1] * 100
                     
