@@ -1,28 +1,25 @@
 # ==============================================================================
-# FASE 45: ORQUESTACIÓN DE MICROSERVICIOS (DOCKER COMPOSE)
-# Objetivo: Levantar simultáneamente la Web y el Robot, comunicándolos a 
-# través de una carpeta compartida (Volumen) para los archivos CSV.
+# FASE 45.1: ORQUESTACIÓN AVANZADA (MODO DESARROLLO)
+# Objetivo: Conectar la carpeta local con el contenedor en tiempo real.
 # ==============================================================================
 
 version: '3.8'
 
 services:
-  # 1. EL RESTAURANTE (Portal Visual Streamlit)
   portal_web:
     build: .
     container_name: ia_quant_portal
     command: streamlit run app_portal.py --server.port=8501 --server.address=0.0.0.0
     ports:
-      - "8501:8501" # Abrimos la puerta al exterior para que puedas entrar desde tu navegador
+      - "8501:8501"
     volumes:
-      - ./datos_bitacora:/app/datos_bitacora # El "Montacargas" para los CSV
-    restart: always # Si se cae, el administrador lo levanta automáticamente
+      - .:/app  # <--- MAGIA AQUÍ: Conecta TODA tu carpeta en tiempo real
+    restart: always
 
-  # 2. LA COCINA FANTASMA (Robot Ejecutor en Segundo Plano)
   robot_ia:
     build: .
     container_name: ia_quant_robot
-    command: python robot_ejecutor.py # El robot solo ejecuta Python puro, sin web
+    command: python robot_ejecutor.py
     volumes:
-      - ./datos_bitacora:/app/datos_bitacora # Acceso al mismo "Montacargas"
-    restart: always # Inmortalidad operativa
+      - .:/app  # <--- MAGIA AQUÍ TAMBIÉN
+    restart: always
