@@ -89,8 +89,8 @@ def mision_escaneo_diario():
         if len(df_train) < 50:
             continue
             
-        # ¡ACELERADOR V8 INSTALADO AQUÍ! (n_jobs=-1)
-        model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42, n_jobs=-1)
+        # ¡ACELERADOR V8 INSTALADO AQUÍ!
+        model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42,)
         model.fit(df_train[pistas], df_train['Target'])
         
         hoy = df.iloc[-1]
