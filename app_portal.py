@@ -1,7 +1,7 @@
 # ==============================================================================
-# ARQUITECTURA FASE 41: SISTEMA COMPLETO (RADAR + PARKING + BI)
-# Objetivo: Código maestro unificado. Incluye caché de datos, escáner en vivo,
-# simulador de liquidez pasiva y módulo de Business Intelligence (Tableau AI).
+# ARQUITECTURA FASE 42: EL ESPEJO FINANCIERO (ETFs INVERSOS)
+# Objetivo: Permitir a la IA escanear activos que suben cuando el mercado baja.
+# Esto nos permite ganar dinero en mercados bajistas sin usar cuentas de margen.
 # ==============================================================================
 
 import streamlit as st
@@ -12,7 +12,7 @@ import requests
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 import os
-import plotly.express as px  # Librería de Business Intelligence
+import plotly.express as px
 
 # ------------------------------------------------------------------------------
 # 1. CONFIGURACIÓN VISUAL (MODO INSTITUCIONAL)
@@ -38,13 +38,15 @@ st.sidebar.header("🌍 Universo de Escaneo")
 escanear_indices = st.sidebar.checkbox("Índices (SPY, QQQ, IWM)", value=True)
 escanear_sectores = st.sidebar.checkbox("Sectores (XLK, XLF, XLV, XLE)", value=True)
 escanear_refugios = st.sidebar.checkbox("Refugios (GLD, TLT, BTC-USD)", value=True)
+# NUEVO: Fase 42 - Los Paraguas Financieros
+escanear_inversos = st.sidebar.checkbox("Coberturas Inversas (SH, SQQQ)", value=True, help="Activos que ganan valor cuando la bolsa cae.")
 
 st.sidebar.divider()
 st.sidebar.header("🎛️ Calibración IA")
-dias_vision_ia = st.sidebar.slider("Visión IA (Días)", 1, 15, 3) # Bajado a 3 para más acción
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 70.0, 50.5) # Bajado a 50.5%
-multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 1.5) # Paracaídas más ajustado
-filtro_macro = st.sidebar.checkbox("Lente Macro (Media 200)", value=False) # Desactivado por defecto
+dias_vision_ia = st.sidebar.slider("Visión IA (Días)", 1, 15, 3) 
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 70.0, 50.5) 
+multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 1.5) 
+filtro_macro = st.sidebar.checkbox("Lente Macro (Media 200)", value=False) 
 
 st.sidebar.divider()
 comision_fija = st.sidebar.number_input("Comisión Broker (€)", value=1.0)
@@ -59,7 +61,6 @@ dias_simulacion = st.sidebar.selectbox("Días de Simulación Auditoría", [90, 1
 # ------------------------------------------------------------------------------
 # 3. MOTOR DE CÁLCULO
 # ------------------------------------------------------------------------------
-# El Bibliotecario Inteligente (Memoria Caché)
 @st.cache_data(ttl=3600)
 def descargar_datos_cacheados(ticker, periodo="3y"):
     return yf.Ticker(ticker).history(period=periodo)
@@ -178,7 +179,6 @@ def enviar_alerta(mensaje):
 # ------------------------------------------------------------------------------
 st.title("🏦 Portal IA: Ecosistema Local On-Premise")
 
-# AQUÍ ESTÁN LAS 3 PESTAÑAS
 tab1, tab2, tab3 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría Algorítmica", "📊 Business Intelligence (BI)"])
 
 umbral_f = umbral_base + st.session_state['auto_bias']
@@ -194,6 +194,8 @@ with tab1:
         if escanear_indices: universo.extend([("SPY", "S&P 500"), ("QQQ", "Nasdaq"), ("IWM", "Russell 2000")])
         if escanear_sectores: universo.extend([("XLK", "Tecnología"), ("XLF", "Financiero"), ("XLV", "Salud"), ("XLE", "Energía")])
         if escanear_refugios: universo.extend([("GLD", "Oro"), ("TLT", "Bonos 20A"), ("BTC-USD", "Bitcoin")])
+        # FASE 42: SE AÑADEN LOS ETFS INVERSOS AL UNIVERSO DE BÚSQUEDA
+        if escanear_inversos: universo.extend([("SH", "Inverso S&P 500"), ("SQQQ", "Inverso Nasdaq")])
         
         if not universo:
             st.error("⚠️ Debes seleccionar al menos un grupo de activos.")
@@ -231,10 +233,9 @@ with tab1:
                             precio_stop = precio * (1 - (stop_distancia/100))
                             accion = f"Comprar {acciones:.2f} uds"
                             
-                            # Alerta Telegram
                             msg = (
                                 f"🚀 *NUEVA SEÑAL SWING IA*\n\n"
-                                f"Activo: `{tick}`\n"
+                                f"Activo: `{nombre} ({tick})`\n"
                                 f"Probabilidad: `{prob:.1f}%` 📈\n"
                                 f"Precio: `{precio:.2f} $`\n\n"
                                 f"📦 *Instrucción:* Invertir `{inversion:.2f} €` ({acciones:.4f} acciones).\n"
@@ -321,7 +322,7 @@ with tab2:
     st.subheader("🔬 Auditoría de Memoria y Parking Inteligente")
     st.write("Mientras el mercado está 'Descartado', tu liquidez genera intereses pasivos.")
     
-    activo_sim = st.selectbox("Selecciona un activo para auditar (Ej. QQQ, SPY):", ["QQQ", "SPY", "GLD"])
+    activo_sim = st.selectbox("Selecciona un activo para auditar (Ej. QQQ, SPY):", ["QQQ", "SPY", "GLD", "SH", "SQQQ"])
     
     if st.button(f"🏁 Simular {dias_simulacion} Días con APY del {apy_liquidez}%"):
         with st.spinner("Calculando operaciones e intereses pasivos acumulados..."):
@@ -355,7 +356,6 @@ with tab3:
         df_bi = pd.concat(lista_dfs, ignore_index=True)
         df_bi = df_bi.drop_duplicates()
         
-        # --- PANEL SUPERIOR: KPIs INSTITUCIONALES ---
         st.write("### 📈 KPIs de la Cartera (Key Performance Indicators)")
         total_analizados = len(df_bi)
         ordenes_compra = len(df_bi[df_bi['Order_Type'] == 'BUY'])
@@ -367,8 +367,6 @@ with tab3:
         c3.metric("Capital Teórico Asignado", f"{capital_asignado_total:.2f} €", help="Suma de capital propuesto en las órdenes BUY.")
         
         st.divider()
-        
-        # --- PANEL CENTRAL: VISUALIZACIONES AVANZADAS (PLOTLY) ---
         st.write("### 🧠 Inteligencia Visual")
         
         col_graf_1, col_graf_2 = st.columns(2)
@@ -399,7 +397,6 @@ with tab3:
             )
             st.plotly_chart(fig_bar, use_container_width=True)
             
-        # --- PANEL INFERIOR: MAPA DE CALOR DE CONVICCIÓN ---
         st.write("### 🔥 Mapa de Convicción por Activo")
         fig_scatter = px.scatter(
             df_bi, 
