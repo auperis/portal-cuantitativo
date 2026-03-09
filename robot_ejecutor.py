@@ -177,7 +177,7 @@ schedule.every().day.at("22:15").do(mision_escaneo_diario)
 # Bucle infinito: El robot se queda "durmiendo" y comprobando la hora cada 60 segundos
 if __name__ == "__main__":
     # IMPORTANTE: Descomenta la siguiente línea si quieres probar que el robot funciona AHORA MISMO
-    # mision_escaneo_diario() 
+     mision_escaneo_diario() 
     
     while True:
         schedule.run_pending()
