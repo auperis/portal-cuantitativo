@@ -44,7 +44,7 @@ escanear_inversos = st.sidebar.checkbox("Coberturas Inversas (SH, SQQQ)", value=
 st.sidebar.divider()
 st.sidebar.header("🎛️ Calibración IA")
 dias_vision_ia = st.sidebar.slider("Visión IA (Días)", 1, 15, 3) 
-umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 30.0, 70.0, 50.5) 
+umbral_base = st.sidebar.slider("Umbral Probabilidad (%)", 50.0, 70.0, 50.5) 
 multiplicador_atr = st.sidebar.slider("Multiplicador ATR", 1.0, 5.0, 1.5) 
 filtro_macro = st.sidebar.checkbox("Lente Macro (Media 200)", value=False) 
 
