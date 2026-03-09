@@ -1,7 +1,6 @@
 # ==============================================================================
-# ARQUITECTURA FASE 44: EL GATILLO AUTOMÁTICO (BACKGROUND WORKER)
-# Objetivo: Ejecutar el radar de forma autónoma cada día al cierre del mercado,
-# enviar alertas por Telegram y guardar el registro (CSV) para auditoría.
+# ARQUITECTURA FASE 47: EL SIMULACRO DE INCENDIO (ROBOT ACELERADO)
+# Objetivo: Forzar la ejecución, usar todos los núcleos y enviar Telegram.
 # ==============================================================================
 
 import yfinance as yf
@@ -11,23 +10,22 @@ import requests
 from sklearn.ensemble import RandomForestClassifier
 from datetime import datetime
 import time
-import schedule # Librería clave para programar tareas (el "temporizador")
+import schedule 
 import os
 
 # ------------------------------------------------------------------------------
-# 1. CONFIGURACIÓN DEL ROBOT (ADN Institucional)
+# 1. CONFIGURACIÓN DEL ROBOT
 # ------------------------------------------------------------------------------
-# Estos datos los lee el robot sin necesidad de interfaz gráfica
 TOKEN_TELEGRAM = "8713410900:AAF-6ZxBDBwRcDDdVYV1CPEIxM7adJL4tVA"
 CHAT_ID = "1063578190"
 
-# Parámetros de Seguridad Fijos (Los escudos siempre arriba)
-UMBRAL_COMPRA = 1 
+# ¡SABOTAJE ACTIVADO! Umbral bajado al 1.0% para forzar que compre algo
+UMBRAL_COMPRA = 1.0 
+
 DIAS_VISION = 3
 MULTIPLICADOR_ATR = 1.5
 CAPITAL_TOTAL = 1000
 
-# El Universo a escanear
 UNIVERSO = [
     ("SPY", "S&P 500"), ("QQQ", "Nasdaq"), ("IWM", "Russell 2000"),
     ("XLK", "Tecnología"), ("XLF", "Financiero"), ("XLV", "Salud"), ("XLE", "Energía"),
@@ -47,7 +45,7 @@ def enviar_alerta_telegram(mensaje):
         print(f"Error enviando Telegram: {e}")
 
 # ------------------------------------------------------------------------------
-# 3. EL CEREBRO DE LA IA (Modo "Headless" - Sin interfaz)
+# 3. EL CEREBRO DE LA IA
 # ------------------------------------------------------------------------------
 def calcular_indicadores(df):
     d = df.copy()
@@ -91,7 +89,8 @@ def mision_escaneo_diario():
         if len(df_train) < 50:
             continue
             
-        model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42)
+        # ¡ACELERADOR V8 INSTALADO AQUÍ! (n_jobs=-1)
+        model = RandomForestClassifier(n_estimators=100, max_depth=7, random_state=42, n_jobs=-1)
         model.fit(df_train[pistas], df_train['Target'])
         
         hoy = df.iloc[-1]
@@ -110,23 +109,21 @@ def mision_escaneo_diario():
         inversion = 0.0
         tipo_orden = "HOLD_CASH"
         
-        # LÓGICA DE DECISIÓN DEL ROBOT
         if prob >= UMBRAL_COMPRA and vol_ok and rsi_ok:
             operaciones_hoy += 1
             tipo_orden = "BUY"
             
             rango = 100 - UMBRAL_COMPRA
             factor = min(max((prob - UMBRAL_COMPRA) / rango, 0), 1) if rango > 0 else 0
-            exp_pct = 0.05 + (factor * (0.25 - 0.05)) # Max exposición 25%
+            exp_pct = 0.05 + (factor * (0.25 - 0.05))
             inversion = CAPITAL_TOTAL * exp_pct
             acciones = inversion / precio
             
             stop_distancia = hoy['ATR_pct'] * MULTIPLICADOR_ATR
             precio_stop = precio * (1 - (stop_distancia/100))
             
-            # El Robot avisa a su dueño
             msg = (
-                f"🤖 *AUTO-RADAR IA: SEÑAL CONFIRMADA*\n\n"
+                f"🤖 *PICAYO IA: SEÑAL CONFIRMADA*\n\n"
                 f"Activo: `{nombre} ({tick})`\n"
                 f"Probabilidad: `{prob:.1f}%`\n"
                 f"Precio: `{precio:.2f} $`\n\n"
@@ -135,7 +132,6 @@ def mision_escaneo_diario():
             )
             enviar_alerta_telegram(msg)
             
-        # GUARDADO EN MEMORIA LOCAL (Bitácora)
         fecha_hoy = datetime.now().strftime("%Y-%m-%d")
         resultados_csv.append({
             "Date": fecha_hoy,
@@ -149,35 +145,27 @@ def mision_escaneo_diario():
             "AI_Reasoning_XAI": motivo_principal
         })
         
-        # Evitar el baneo de Yahoo Finance
         time.sleep(1) 
 
-    # --------------------------------------------------------------------------
-    # 4. EXPORTACIÓN SILENCIOSA
-    # --------------------------------------------------------------------------
     if resultados_csv:
         df_ordenes = pd.DataFrame(resultados_csv)
         nombre_archivo = f"trade_log_IA_{datetime.now().strftime('%Y%m%d')}.csv"
         df_ordenes.to_csv(nombre_archivo, index=False)
-        print(f"\n[OK] Análisis completado. Archivo '{nombre_archivo}' guardado en el servidor.")
+        print(f"\n[OK] Análisis completado. Archivo '{nombre_archivo}' guardado.")
         
-        # Si todo fue HOLD_CASH, el robot envía un resumen de tranquilidad
         if operaciones_hoy == 0:
-            enviar_alerta_telegram("🛡️ *AUTO-RADAR IA:* Mercado escaneado. 0 oportunidades detectadas hoy. Manteniendo los 1.000 € en liquidez segura.")
+            enviar_alerta_telegram("🛡️ *PICAYO IA:* Mercado escaneado. 0 oportunidades detectadas. Manteniendo liquidez.")
 
 # ------------------------------------------------------------------------------
 # 5. EL RELOJ (CRON JOB)
 # ------------------------------------------------------------------------------
-print("🤖 Robot Ejecutor Iniciado. Esperando instrucciones de horario...")
+print("🤖 Robot Ejecutor Iniciado. Ejecutando simulacro...")
 
-# Programamos el robot para que se despierte todos los días a las 22:15 
-# (15 minutos después del cierre del mercado americano)
 schedule.every().day.at("22:15").do(mision_escaneo_diario)
 
-# Bucle infinito: El robot se queda "durmiendo" y comprobando la hora cada 60 segundos
 if __name__ == "__main__":
-    # IMPORTANTE: Descomenta la siguiente línea si quieres probar que el robot funciona AHORA MISMO
-     mision_escaneo_diario() 
+    # CRISTAL ROTO: El robot se ejecutará nada más arrancar
+    mision_escaneo_diario() 
     
     while True:
         schedule.run_pending()
