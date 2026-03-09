@@ -1,9 +1,10 @@
+wheel
+setuptools
 streamlit
-yfinance
 pandas
 numpy
-plotly
+yfinance
 scikit-learn
-matplotlib
-firebase-admin
-google-cloud-firestore
+plotly
+schedule
+requests
