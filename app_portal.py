@@ -177,6 +177,7 @@ def enviar_alerta(mensaje):
 # ------------------------------------------------------------------------------
 # 5. DASHBOARD PRINCIPAL Y PESTAÑAS
 # ------------------------------------------------------------------------------
+st.title("🏦 PICAYO IA")
 
 tab1, tab2, tab3 = st.tabs(["🚀 Escáner de Liderazgo (HOY)", "🔬 Auditoría Algorítmica", "📊 Business Intelligence (BI)"])
 
