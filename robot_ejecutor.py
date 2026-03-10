@@ -153,12 +153,12 @@ def mision_escaneo_diario():
 # 4. CICLO DE VIDA DEL ROBOT
 # ------------------------------------------------------------------------------
 if __name__ == "__main__":
-    # EJECUCIÓN INMEDIATA (Simulacro de Incendio)
-    mision_escaneo_diario()
-    
+    # EJECUCIÓN INMEDIATA DESACTIVADA (Cristal arreglado)
+    # mision_escaneo_diario()
+
     # PROGRAMACIÓN DIARIA (La hora de la verdad)
     schedule.every().day.at("22:15").do(mision_escaneo_diario)
-    
+
     print(">>> [PUNTO 5] ROBOT EN MODO ESPERA (DORMIDO HASTA LAS 22:15)", flush=True)
     while True:
         schedule.run_pending()
